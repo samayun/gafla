@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bangladeshi Dominoes - Royal Multiplayer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #020617;
+            --table-color: #0f172a;
+            --accent-primary: #38bdf8;
+            --accent-secondary: #ec4899;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --color-0: #f1f5f9;
+            --color-1: #000000;
+            --color-2: #22c55e;
+            --color-3: #ec4899;
+            --color-4: #64748b;
+            --color-5: #1e3a8a;
+            --color-6: #eab308;
+            --glass: rgba(15, 23, 42, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-image: radial-gradient(circle at 50% 50%, #1e293b 0%, #020617 100%);
+        }
+
+        /* --- Dashboard --- */
+        #dashboard {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            position: absolute;
+            background: var(--bg-color);
+            pointer-events: all;
+        }
+
+        .lobby-card {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            padding: 50px;
+            border-radius: 40px;
+            text-align: center;
+            max-width: 550px;
+            width: 90%;
+            box-shadow: 0 30px 100px rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(25px);
+        }
+
+        .input-group {
+            margin: 25px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        input {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--glass-border);
+            padding: 15px 20px;
+            border-radius: 12px;
+            color: white;
+            font-size: 1.1rem;
+            outline: none;
+            transition: 0.3s;
+        }
+
+        input:focus {
+            border-color: var(--accent-primary);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .player-selector {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 10px;
+        }
+
+        .player-btn {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            padding: 15px;
+            border-radius: 15px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-weight: 600;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+
+        .player-btn.selected {
+            background: var(--accent-primary);
+            color: white;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);
+        }
+
+        .player-btn span.seat-status {
+            font-size: 0.75rem;
+            opacity: 0.8;
+        }
+
+        /* --- Main Layout --- */
+        #game-view {
+            width: 100%;
+            height: 100%;
+            display: none;
+            grid-template-rows: 80px 1fr 180px;
+            padding: 20px;
+            position: relative;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+            z-index: 10;
+        }
+
+        .logo {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -2px;
+        }
+
+        .stat-badge {
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        #main-board {
+            position: relative;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 40px;
+            margin: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.5);
+        }
+
+        #board-viewport {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: auto;
+            padding: 400px;
+            scroll-behavior: smooth;
+        }
+
+        #domino-chain {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 100px;
+            transition: transform 0.3s ease;
+        }
+
+        /* --- Domino Tile --- */
+        .domino {
+            width: 56px;
+            height: 110px;
+            background: #ffffff;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            padding: 4px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .domino.horizontal {
+            width: 110px;
+            height: 56px;
+            flex-direction: row;
+        }
+
+        .domino.playable {
+            box-shadow: 0 0 25px var(--accent-primary);
+            border: 2px solid var(--accent-primary);
+            transform: translateY(-8px);
+        }
+
+        .domino:hover {
+            transform: translateY(-15px) scale(1.05);
+            z-index: 100;
+            box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8);
+        }
+
+        .domino .half {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            padding: 4px;
+        }
+
+        .domino .divider {
+            height: 1px;
+            background: rgba(0, 0, 0, 0.1);
+            width: 85%;
+            margin: 0 auto;
+            border-radius: 1px;
+        }
+
+        .domino.horizontal .divider {
+            width: 1px;
+            height: 85%;
+            margin: auto 0;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin: auto;
+            box-shadow: inset 1px 1.5px 2px rgba(0, 0, 0, 0.4);
+        }
+
+        .dot.v1 {
+            background: var(--color-1);
+        }
+
+        .dot.v2 {
+            background: var(--color-2);
+        }
+
+        .dot.v3 {
+            background: var(--color-3);
+        }
+
+        .dot.v4 {
+            background: var(--color-4);
+        }
+
+        .dot.v5 {
+            background: var(--color-5);
+        }
+
+        .dot.v6 {
+            background: var(--color-6);
+        }
+
+        /* Positions */
+        .d1 {
+            grid-area: 2 / 2;
+        }
+
+        .d2a {
+            grid-area: 1 / 3;
+        }
+
+        .d2b {
+            grid-area: 3 / 1;
+        }
+
+        .d3a {
+            grid-area: 1 / 3;
+        }
+
+        .d3b {
+            grid-area: 2 / 2;
+        }
+
+        .d3c {
+            grid-area: 3 / 1;
+        }
+
+        .d4a {
+            grid-area: 1 / 1;
+        }
+
+        .d4b {
+            grid-area: 1 / 3;
+        }
+
+        .d4c {
+            grid-area: 3 / 1;
+        }
+
+        .d4d {
+            grid-area: 3 / 3;
+        }
+
+        .d5a {
+            grid-area: 1 / 1;
+        }
+
+        .d5b {
+            grid-area: 1 / 3;
+        }
+
+        .d5c {
+            grid-area: 2 / 2;
+        }
+
+        .d5d {
+            grid-area: 3 / 1;
+        }
+
+        .d5e {
+            grid-area: 3 / 3;
+        }
+
+        .d6a {
+            grid-area: 1 / 1;
+        }
+
+        .d6b {
+            grid-area: 1 / 3;
+        }
+
+        .d6c {
+            grid-area: 2 / 1;
+        }
+
+        .d6d {
+            grid-area: 2 / 3;
+        }
+
+        .d6e {
+            grid-area: 3 / 1;
+        }
+
+        .d6f {
+            grid-area: 3 / 3;
+        }
+
+        /* --- Players --- */
+        .player-tag {
+            position: absolute;
+            padding: 12px 24px;
+            background: var(--glass);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            z-index: 5;
+            transition: 0.4s;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .player-tag.active {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 30px rgba(56, 189, 248, 0.4);
+            transform: scale(1.1);
+            color: var(--text-primary);
+        }
+
+        .player-tag .name {
+            display: block;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 4px;
+            padding-bottom: 2px;
+        }
+
+        .player-tag .status {
+            font-size: 0.65rem;
+            opacity: 0.7;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        #tag-top {
+            top: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        #tag-right {
+            top: 50%;
+            right: 60px;
+            transform: translateY(-50%) rotate(90deg);
+        }
+
+        #tag-left {
+            top: 50%;
+            left: 60px;
+            transform: translateY(-50%) rotate(-90deg);
+        }
+
+        #tag-bottom {
+            bottom: 200px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        /* --- Footer Hand --- */
+        #footer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 10;
+            padding: 10px;
+        }
+
+        .hand-container {
+            width: 100%;
+            height: 140px;
+            display: flex;
+            justify-content: center;
+            background: var(--glass);
+            border-radius: 30px;
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(25px);
+            position: relative;
+            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        #my-hand {
+            display: flex;
+            gap: 12px;
+            padding: 10px 30px;
+            overflow-x: auto;
+            scroll-behavior: smooth;
+            align-items: center;
+        }
+
+        /* --- Action UI --- */
+        #action-bar {
+            position: absolute;
+            right: 50px;
+            bottom: 220px;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        .action-btn {
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            padding: 18px 36px;
+            border-radius: 18px;
+            font-weight: 800;
+            cursor: pointer;
+            pointer-events: all;
+            text-transform: uppercase;
+            box-shadow: 0 15px 30px rgba(56, 189, 248, 0.4);
+            display: none;
+        }
+
+        /* --- Overlays --- */
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.92);
+            z-index: 3000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(15px);
+        }
+
+        .overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #0f172a;
+            padding: 50px;
+            border-radius: 40px;
+            border: 1px solid var(--glass-border);
+            text-align: center;
+            max-width: 500px;
+            width: 95%;
+            box-shadow: 0 30px 100px rgba(0, 0, 0, 0.8);
+        }
+
+        .btn-prime {
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            padding: 18px;
+            border-radius: 15px;
+            width: 100%;
+            font-weight: 800;
+            cursor: pointer;
+            margin-top: 25px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+        }
+
+        #toast {
+            position: fixed;
+            top: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 14px 40px;
+            background: var(--accent-primary);
+            color: white;
+            border-radius: 50px;
+            font-weight: 800;
+            opacity: 0;
+            transition: 0.4s;
+            z-index: 4000;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        #toast.show {
+            opacity: 1;
+            top: 140px;
+        }
+
+        .boneyard {
+            position: absolute;
+            left: 60px;
+            bottom: 220px;
+            text-align: center;
+        }
+
+        .card-back {
+            width: 44px;
+            height: 22px;
+            background: #e2e8f0;
+            border-radius: 5px;
+            border: 1px solid #94a3b8;
+            margin-bottom: -18px;
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- LOBBY -->
+    <div id="dashboard">
+        <div class="lobby-card">
+            <h1 style="font-size: 2.5rem; letter-spacing: -2px; margin-bottom: 5px;">DOMINO <span
+                    style="color:var(--accent-primary)">ROYAL</span></h1>
+            <p style="color:var(--text-secondary); margin-bottom: 30px;">Premium Bangladeshi Experience</p>
+
+            <div class="input-group">
+                <input type="text" id="name-input" placeholder="Enter Your Name">
+                <input type="text" id="room-input" placeholder="Enter Room (e.g. BD-CLUB)">
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-top: 10px;">Select Your Seat:</p>
+                <div class="player-selector">
+                    <button class="player-btn" onclick="selectSeat(0)">Seat 1 <span class="seat-status"
+                            id="seat-0">-</span></button>
+                    <button class="player-btn" onclick="selectSeat(1)">Seat 2 <span class="seat-status"
+                            id="seat-1">-</span></button>
+                    <button class="player-btn" onclick="selectSeat(2)">Seat 3 <span class="seat-status"
+                            id="seat-2">-</span></button>
+                    <button class="player-btn" onclick="selectSeat(3)">Seat 4 <span class="seat-status"
+                            id="seat-3">-</span></button>
+                </div>
+            </div>
+
+            <button class="btn-prime" onclick="joinRoom()">JOIN TABLE</button>
+        </div>
+    </div>
+
+    <!-- GAME VIEW -->
+    <div id="game-view">
+        <header>
+            <div class="logo">DOMINO</div>
+            <div class="stats-container">
+                <div class="stat-badge">ROOM: <span id="display-room" style="color:var(--accent-primary)">-</span></div>
+                <div class="stat-badge">ME: <span id="display-name" style="color:var(--accent-secondary)">-</span></div>
+                <button onclick="location.reload()" class="stat-badge"
+                    style="cursor:pointer; background:rgba(255,0,0,0.1); color:#f87171;">EXIT</button>
+            </div>
+        </header>
+
+        <div id="main-board">
+            <div id="board-viewport">
+                <div id="domino-chain"></div>
+            </div>
+
+            <!-- Visual tags (rotated per local view) -->
+            <div id="tag-top" class="player-tag"></div>
+            <div id="tag-right" class="player-tag"></div>
+            <div id="tag-left" class="player-tag"></div>
+            <div id="tag-bottom" class="player-tag"></div>
+
+            <div class="boneyard">
+                <div id="bone-pile"></div>
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 30px; font-weight: 800;">
+                    BONEYARD: <span id="bone-count" style="color:var(--accent-primary)">0</span></div>
+            </div>
+        </div>
+
+        <div id="action-bar">
+            <button id="btn-draw" class="action-btn" onclick="handleDraw()">DRAW CARD</button>
+            <button id="btn-pass" class="action-btn" onclick="handlePass()" style="background:#1e293b">PASS
+                TURN</button>
+        </div>
+
+        <div id="footer">
+            <div class="hand-container">
+                <div id="my-hand"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL -->
+    <div id="modal-overlay" class="overlay">
+        <div class="modal">
+            <h2 id="modal-title" style="margin-bottom: 20px; font-size: 2rem;">ROUND FINISHED</h2>
+            <div id="modal-body"></div>
+            <button class="btn-prime" onclick="nextRound()">START NEXT ROUND</button>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        // --- State ---
+        let config = { room: '', myIdx: 0, myName: '' };
+        let state = {
+            board: [],
+            hands: [[], [], [], []],
+            boneyard: [],
+            turn: 0,
+            status: 'lobby',
+            scores: [0, 0, 0, 0],
+            passes: [0, 0, 0, 0],
+            playerNames: ['', '', '', ''],
+            playerActive: [0, 0, 0, 0],
+            lastUpdate: 0
+        };
+
+        const DOTS = { 1: ['d1'], 2: ['d2a', 'd2b'], 3: ['d3a', 'd3b', 'd3c'], 4: ['d4a', 'd4b', 'd4c', 'd4d'], 5: ['d5a', 'd5b', 'd5c', 'd5d', 'd5e'], 6: ['d6a', 'd6b', 'd6c', 'd6d', 'd6e', 'd6f'] };
+
+        // --- Lobby Logic ---
+        function selectSeat(idx) {
+            config.myIdx = idx;
+            document.querySelectorAll('.player-btn').forEach((btn, i) => btn.classList.toggle('selected', i === idx));
+        }
+
+        function joinRoom() {
+            const name = document.getElementById('name-input').value.trim();
+            const room = document.getElementById('room-input').value.trim();
+            if (!name || !room) { showToast("Name and Room are required!"); return; }
+
+            config.room = room;
+            config.myName = name;
+
+            // Update URL with Room Name
+            const url = new URL(window.location);
+            url.searchParams.set('room', room);
+            window.history.pushState({}, '', url);
+
+            syncState();
+            state.playerNames[config.myIdx] = name;
+            state.playerActive[config.myIdx] = Date.now();
+
+            if (state.status === 'lobby' || isStale()) {
+                initGame();
+            } else {
+                saveState();
+            }
+
+            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('game-view').style.display = 'grid';
+            document.getElementById('display-room').innerText = room;
+            document.getElementById('display-name').innerText = name;
+
+            renderAll();
+            startHeartbeat();
+
+            if (state.board.length === 0 && state.status === 'playing') {
+                checkAutoStart();
+            }
+        }
+
+        function initGame() {
+            let deck = [];
+            for (let i = 0; i <= 6; i++) for (let j = i; j <= 6; j++) deck.push({ a: i, b: j });
+            deck.sort(() => Math.random() - 0.5);
+
+            state.board = [];
+            state.hands = [deck.splice(0, 7), deck.splice(0, 7), deck.splice(0, 7), deck.splice(0, 7)];
+            state.boneyard = deck;
+            state.status = 'playing';
+            state.passes = [0, 0, 0, 0];
+            state.lastUpdate = Date.now();
+
+            for (let p = 0; p < 4; p++) {
+                if (state.hands[p].some(c => c.a === 0 && c.b === 0)) state.turn = p;
+            }
+            saveState();
+        }
+
+        function checkAutoStart() {
+            if (state.turn === config.myIdx) {
+                const has00 = state.hands[config.myIdx].some(c => c.a === 0 && c.b === 0);
+                if (has00) showToast("YOU START THE GAME WITH 0:0!");
+            }
+        }
+
+        function saveState() {
+            state.lastUpdate = Date.now();
+            localStorage.setItem(`dom_royal_${config.room}`, JSON.stringify(state));
+        }
+
+        function syncState() {
+            const saved = localStorage.getItem(`dom_royal_${config.room}`);
+            if (saved) state = JSON.parse(saved);
+        }
+
+        function isStale() { return Date.now() - state.lastUpdate > 1000 * 60 * 15; }
+
+        function startHeartbeat() {
+            setInterval(() => {
+                syncState();
+                state.playerActive[config.myIdx] = Date.now();
+                saveState();
+                renderAll();
+            }, 3000);
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === `dom_royal_${config.room}`) {
+                state = JSON.parse(e.newValue);
+                renderAll();
+            }
+        });
+
+        function handleMove(idx, side) {
+            if (state.turn !== config.myIdx || state.status !== 'playing') return;
+            const card = state.hands[config.myIdx][idx];
+
+            if (state.board.length === 0) {
+                const has00 = state.hands[config.myIdx].some(c => c.a === 0 && c.b === 0);
+                if (has00 && (card.a !== 0 || card.b !== 0)) { showToast("Must start with 0:0!"); return; }
+                state.board.push({ a: card.a, b: card.b });
+            } else {
+                const head = state.board[0].a, tail = state.board[state.board.length - 1].b;
+                if (side === 'head') {
+                    if (card.b === head) state.board.unshift({ a: card.a, b: card.b });
+                    else state.board.unshift({ a: card.b, b: card.a });
+                } else {
+                    if (card.a === tail) state.board.push({ a: card.a, b: card.b });
+                    else state.board.push({ a: card.b, b: card.a });
+                }
+            }
+
+            state.hands[config.myIdx].splice(idx, 1);
+            state.passes = [0, 0, 0, 0];
+            if (state.hands[config.myIdx].length === 0) { endRound(config.myIdx); return; }
+            if (state.board[0].a === state.board[state.board.length - 1].b && isBlocked()) { endRound(config.myIdx, true); return; }
+
+            state.turn = (state.turn + 1) % 4;
+            saveState();
+            renderAll();
+        }
+
+        function isBlocked() {
+            if (state.boneyard.length > 0) return false;
+            for (let i = 0; i < 4; i++) if (getPossibles(i).length > 0) return false;
+            return true;
+        }
+
+        function getPossibles(pIdx) {
+            if (state.board.length === 0) return state.hands[pIdx].map((_, i) => ({ idx: i, side: 'tail' }));
+            const h = state.board[0].a, t = state.board[state.board.length - 1].b;
+            let m = [];
+            state.hands[pIdx].forEach((c, i) => {
+                if (c.a === h || c.b === h) m.push({ idx: i, side: 'head' });
+                if (c.a === t || c.b === t) m.push({ idx: i, side: 'tail' });
+            });
+            return m;
+        }
+
+        function handleDraw() {
+            if (state.turn !== config.myIdx || state.boneyard.length === 0) return;
+            state.hands[config.myIdx].push(state.boneyard.pop());
+            saveState();
+            renderAll();
+        }
+
+        function handlePass() {
+            if (state.turn !== config.myIdx) return;
+            state.passes[config.myIdx] = 1;
+            if (state.passes.every(v => v === 1)) {
+                let pts = state.hands.map(h => h.reduce((s, c) => s + c.a + c.b, 0));
+                endRound(pts.indexOf(Math.min(...pts)), false, "BLOCKED");
+            } else {
+                state.turn = (state.turn + 1) % 4;
+                saveState();
+                renderAll();
+            }
+        }
+
+        function endRound(winnerIdx, special = false, title = "ROUND OVER") {
+            state.status = 'ended';
+            let pts = state.hands.map(h => h.reduce((s, c) => s + c.a + c.b, 0));
+            pts[winnerIdx] = 0;
+            pts.forEach((p, i) => state.scores[i] += p);
+            saveState();
+            renderResult(winnerIdx, pts, special, title);
+        }
+
+        function nextRound() {
+            document.getElementById('modal-overlay').classList.remove('active');
+            initGame();
+            renderAll();
+        }
+
+        function renderAll() {
+            const isMyTurn = state.turn === config.myIdx && state.status === 'playing';
+            const order = [(config.myIdx + 2) % 4, (config.myIdx + 1) % 4, (config.myIdx + 3) % 4, config.myIdx];
+            const tags = ['tag-top', 'tag-right', 'tag-left', 'tag-bottom'];
+
+            order.forEach((pIdx, i) => {
+                const el = document.getElementById(tags[i]);
+                const isActive = (Date.now() - state.playerActive[pIdx] < 15000);
+                const name = state.playerNames[pIdx] || `Seat ${pIdx + 1}`;
+                el.innerHTML = `<span class="name">${name}</span>
+                                <span class="status">${isActive ? 'Online' : 'Away'} | ${state.hands[pIdx].length} Cards</span>`;
+                el.classList.toggle('active', state.turn === pIdx);
+            });
+
+            const chain = document.getElementById('domino-chain');
+            chain.innerHTML = '';
+            state.board.forEach(c => chain.appendChild(createDomino(c.a, c.b, c.a !== c.b)));
+
+            const handEl = document.getElementById('my-hand');
+            handEl.innerHTML = '';
+            const poss = isMyTurn ? getPossibles(config.myIdx) : [];
+            state.hands[config.myIdx].forEach((c, i) => {
+                const dom = createDomino(c.a, c.b);
+                const playable = poss.find(m => m.idx === i);
+                if (playable) {
+                    dom.classList.add('playable');
+                    dom.onclick = () => handleMove(i, playable.side);
+                }
+                handEl.appendChild(dom);
+            });
+
+            const hasPossible = poss.length > 0;
+            document.getElementById('btn-draw').style.display = (isMyTurn && !hasPossible && state.boneyard.length > 0) ? 'block' : 'none';
+            document.getElementById('btn-pass').style.display = (isMyTurn && !hasPossible && state.boneyard.length === 0) ? 'block' : 'none';
+            document.getElementById('bone-count').innerText = state.boneyard.length;
+            const pile = document.getElementById('bone-pile');
+            pile.innerHTML = '';
+            for (let i = 0; i < Math.min(state.boneyard.length, 6); i++) {
+                const b = document.createElement('div'); b.className = 'card-back';
+                b.style.transform = `rotate(${Math.random() * 6 - 3}deg)`;
+                pile.appendChild(b);
+            }
+        }
+
+        function createDomino(a, b, horizontal = false) {
+            const div = document.createElement('div');
+            div.className = `domino ${horizontal ? 'horizontal' : ''}`;
+            const half = (v) => {
+                const h = document.createElement('div'); h.className = 'half';
+                if (DOTS[v]) DOTS[v].forEach(p => {
+                    const d = document.createElement('div'); d.className = `dot ${p} v${v}`;
+                    h.appendChild(d);
+                });
+                return h;
+            };
+            div.appendChild(half(a));
+            const s = document.createElement('div'); s.className = 'divider';
+            div.appendChild(s);
+            div.appendChild(half(b));
+            return div;
+        }
+
+        function renderResult(winnerIdx, roundPts, special, title) {
+            document.getElementById('modal-title').innerText = title;
+            let body = `<h2 style='color:var(--accent-primary); margin-bottom:15px'>${state.playerNames[winnerIdx] || 'Player ' + (winnerIdx + 1)} WON!</h2>`;
+            if (special) body += `<p style='color:var(--accent-secondary); font-weight:800'>MASTERSTROKE BLOCK WIN!</p>`;
+            body += `<div style='margin-top:25px'>`;
+            roundPts.forEach((p, i) => {
+                body += `<div style='display:flex; justify-content:space-between; padding:15px; margin-bottom:8px; background:rgba(255,255,255,0.03); border-radius:15px'>
+                    <span>${state.playerNames[i] || 'Player ' + (i + 1)}</span>
+                    <span style='color:var(--accent-primary); font-weight:800'>+${p} PTS (Total: ${state.scores[i]})</span>
+                </div>`;
+            });
+            body += `</div>`;
+            document.getElementById('modal-body').innerHTML = body;
+            document.getElementById('modal-overlay').classList.add('active');
+        }
+
+        function showToast(txt) {
+            const t = document.getElementById('toast');
+            t.innerText = txt; t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+
+        function checkUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            const room = params.get('room');
+            if (room) {
+                document.getElementById('room-input').value = room;
+            }
+        }
+
+        selectSeat(0);
+        checkUrlParams();
+
+        setInterval(() => {
+            const rmVal = document.getElementById('room-input').value.trim();
+            if (!rmVal) return;
+            const saved = localStorage.getItem(`dom_royal_${rmVal}`);
+            if (saved) {
+                const s = JSON.parse(saved);
+                for (let i = 0; i < 4; i++) {
+                    const active = (Date.now() - s.playerActive[i] < 15000);
+                    const name = s.playerNames[i];
+                    document.getElementById(`seat-${i}`).innerText = name ? (active ? name : name + ' (Away)') : 'Empty';
+                }
+            }
+        }, 2000);
+    </script>
+</body>
+
+</html>
