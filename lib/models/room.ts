@@ -6,15 +6,21 @@ export interface ICard {
 }
 
 export interface IPlayer {
-    name: string;
+    username: string;
+    displayName: string;
     seatIndex: number;
-    socketId: string;
     connected: boolean;
     lastSeen: Date;
 }
 
+export interface IRoomRules {
+    mustStartWith00: boolean;
+    blockerGetsZero: boolean;
+}
+
 export interface IRoom extends Document {
     code: string;
+    creator: string;
     players: IPlayer[];
     board: ICard[];
     hands: ICard[][];
@@ -24,6 +30,7 @@ export interface IRoom extends Document {
     scores: number[];
     passes: number[];
     round: number;
+    rules: IRoomRules;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -35,11 +42,19 @@ const CardSchema = new Schema<ICard>(
 
 const PlayerSchema = new Schema<IPlayer>(
     {
-        name: { type: String, required: true },
+        username: { type: String, required: true },
+        displayName: { type: String, required: true },
         seatIndex: { type: Number, required: true },
-        socketId: { type: String, default: "" },
         connected: { type: Boolean, default: true },
         lastSeen: { type: Date, default: Date.now },
+    },
+    { _id: false }
+);
+
+const RulesSchema = new Schema<IRoomRules>(
+    {
+        mustStartWith00: { type: Boolean, default: true },
+        blockerGetsZero: { type: Boolean, default: false },
     },
     { _id: false }
 );
@@ -47,6 +62,7 @@ const PlayerSchema = new Schema<IPlayer>(
 const RoomSchema = new Schema<IRoom>(
     {
         code: { type: String, required: true, unique: true, uppercase: true },
+        creator: { type: String, default: "" },
         players: { type: [PlayerSchema], default: [] },
         board: { type: [CardSchema], default: [] },
         hands: { type: [[CardSchema]], default: [[], [], [], []] },
@@ -60,6 +76,7 @@ const RoomSchema = new Schema<IRoom>(
         scores: { type: [Number], default: [0, 0, 0, 0] },
         passes: { type: [Number], default: [0, 0, 0, 0] },
         round: { type: Number, default: 0 },
+        rules: { type: RulesSchema, default: () => ({}) },
     },
     { timestamps: true }
 );

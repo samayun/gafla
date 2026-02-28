@@ -1,6 +1,5 @@
 import { ICard, IRoom } from "./models/room";
 
-/** Generate a full 28-tile domino deck and shuffle */
 export function createShuffledDeck(): ICard[] {
     const deck: ICard[] = [];
     for (let i = 0; i <= 6; i++) {
@@ -8,7 +7,6 @@ export function createShuffledDeck(): ICard[] {
             deck.push({ a: i, b: j });
         }
     }
-    // Fisher-Yates shuffle
     for (let i = deck.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -16,7 +14,6 @@ export function createShuffledDeck(): ICard[] {
     return deck;
 }
 
-/** Deal initial hands of 7 from the deck */
 export function dealHands(deck: ICard[]): { hands: ICard[][]; boneyard: ICard[] } {
     const hands: ICard[][] = [];
     const remaining = [...deck];
@@ -26,7 +23,6 @@ export function dealHands(deck: ICard[]): { hands: ICard[][]; boneyard: ICard[] 
     return { hands, boneyard: remaining };
 }
 
-/** Find who holds 0:0 to start */
 export function findStarter(hands: ICard[][]): number {
     for (let p = 0; p < 4; p++) {
         if (hands[p].some((c) => c.a === 0 && c.b === 0)) return p;
@@ -34,18 +30,15 @@ export function findStarter(hands: ICard[][]): number {
     return 0;
 }
 
-/** Get the head and tail values of the board */
 export function getEndpoints(board: ICard[]): { head: number; tail: number } | null {
     if (board.length === 0) return null;
     return { head: board[0].a, tail: board[board.length - 1].b };
 }
 
-/** Check if a card can be played on a given side */
 export function canPlayOn(card: ICard, value: number): boolean {
     return card.a === value || card.b === value;
 }
 
-/** Get all playable moves for a player */
 export function getPlayableMoves(
     hand: ICard[],
     board: ICard[]
@@ -65,7 +58,6 @@ export function getPlayableMoves(
     return moves;
 }
 
-/** Place a card on the board, orienting it correctly */
 export function placeCard(
     board: ICard[],
     card: ICard,
@@ -97,7 +89,6 @@ export function placeCard(
     return newBoard;
 }
 
-/** Validate a play move */
 export function validatePlay(
     hand: ICard[],
     cardIdx: number,
@@ -110,11 +101,10 @@ export function validatePlay(
 
     const card = hand[cardIdx];
 
-    // First move must be 0:0 if someone has it
     if (board.length === 0) {
         const has00 = hand.some((c) => c.a === 0 && c.b === 0);
         if (has00 && (card.a !== 0 || card.b !== 0)) {
-            return { valid: false, reason: "Must start with 0:0!" };
+            return { valid: false, reason: "0:0 দিয়ে শুরু করতে হবে / Must start with 0:0!" };
         }
         return { valid: true };
     }
@@ -124,10 +114,9 @@ export function validatePlay(
     if (side === "head" && canPlayOn(card, head)) return { valid: true };
     if (side === "tail" && canPlayOn(card, tail)) return { valid: true };
 
-    return { valid: false, reason: "Card doesn't match the board end" };
+    return { valid: false, reason: "তাস বোর্ডের সাথে মিলছে না / Card doesn't match" };
 }
 
-/** Check if the game is blocked (no one can play, boneyard empty) */
 export function isBlocked(hands: ICard[][], board: ICard[], boneyard: ICard[]): boolean {
     if (boneyard.length > 0) return false;
     for (let i = 0; i < 4; i++) {
@@ -136,18 +125,15 @@ export function isBlocked(hands: ICard[][], board: ICard[], boneyard: ICard[]): 
     return true;
 }
 
-/** Calculate points in a hand */
 export function handPoints(hand: ICard[]): number {
     return hand.reduce((sum, c) => sum + c.a + c.b, 0);
 }
 
-/** Determine the winner when blocked (lowest points) */
 export function getBlockedWinner(hands: ICard[][]): number {
     const pts = hands.map(handPoints);
     return pts.indexOf(Math.min(...pts));
 }
 
-/** Create sanitized state for a specific player (hides other hands) */
 export function sanitizeForPlayer(room: IRoom, playerSeat: number) {
     const handSizes = room.hands.map((h) => h.length);
     return {
@@ -161,8 +147,11 @@ export function sanitizeForPlayer(room: IRoom, playerSeat: number) {
         scores: room.scores,
         passes: room.passes,
         round: room.round,
+        rules: room.rules,
+        creator: room.creator,
         players: room.players.map((p) => ({
-            name: p.name,
+            username: p.username,
+            displayName: p.displayName,
             seatIndex: p.seatIndex,
             connected: p.connected,
         })),
