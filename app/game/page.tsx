@@ -265,11 +265,7 @@ function GamePage() {
                 return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
             }
 
-            // Round 2+: winner can start with any card. Non-winner must play venda or pass.
-            const isWinnerStarting = gameState.mySeat === gameState.lastWinner;
-            if (isWinnerStarting) {
-                return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
-            }
+            // Round 2+: winner must play any venda (0:0 not mandatory). No venda = pass.
             const hasDouble = gameState.myHand.some((c) => c.a === c.b);
             if (hasDouble) {
                 return gameState.myHand

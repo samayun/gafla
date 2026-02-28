@@ -115,8 +115,7 @@ export function placeCard(
 /**
  * Empty board (first move of round):
  * - Round 1 + firstRoundStartWith00: 0:0 holder must play 0:0
- * - Round 2+: non-winner must play any venda (double), or pass if none.
- *   Winner starting can play any card (no 0:0 or venda required).
+ * - Round 2+: winner must play any venda (double), 0:0 not mandatory. No venda = auto-pass.
  */
 export function validatePlay(
     hand: ICard[],

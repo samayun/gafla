@@ -259,9 +259,8 @@ export function initSocketHandlers(io: SocketServer) {
                     }
 
                     const hand = room.hands[meta.currentSeat];
-                    const isWinnerStarting = room.board.length === 0 && room.turn === room.lastWinner;
-                    const require00ForFirstMove = !isWinnerStarting && room.round === 1 && (room.rules?.firstRoundStartWith00 ?? true);
-                    const winnerStartsWithVenda = !isWinnerStarting && room.round > 1;
+                    const require00ForFirstMove = room.round === 1 && (room.rules?.firstRoundStartWith00 ?? true);
+                    const winnerStartsWithVenda = room.round > 1;
                     const validation = validatePlay(hand, data.cardIdx, data.side, room.board, require00ForFirstMove, winnerStartsWithVenda);
                     if (!validation.valid) {
                         socket.emit("error", { message: validation.reason || "Invalid move" });
@@ -357,8 +356,7 @@ export function initSocketHandlers(io: SocketServer) {
 
                     const hand = room.hands[meta.currentSeat];
                     const possibles = getPlayableMoves(hand, room.board);
-                    const isWinnerStarting = room.board.length === 0 && room.turn === room.lastWinner;
-                    const vendaRequired = !isWinnerStarting && room.board.length === 0 && room.round > 1;
+                    const vendaRequired = room.board.length === 0 && room.round > 1;
                     const hasNoVenda = vendaRequired && !hasDouble(hand);
                     if (possibles.length > 0 && !hasNoVenda) {
                         socket.emit("error", { message: "আপনার খেলার মতো তাস আছে!" });
@@ -628,11 +626,8 @@ async function processAutoTurns(io: SocketServer, room: IRoom): Promise<void> {
         const hand = room.hands[currentSeat];
         const moves = getPlayableMoves(hand, room.board);
 
-        // Venda (double) requirement: on round > 1 with empty board, must play a double
-        // Exception: winner starting can play any card
+        // Venda (double) requirement: on round > 1 with empty board, winner must play any venda (0:0 not mandatory)
         if (room.board.length === 0 && room.round > 1) {
-            const isWinnerStarting = room.turn === room.lastWinner;
-            if (isWinnerStarting) break; // winner can play any card, no auto-pass
             const playerHasDouble = hasDouble(hand);
             if (!playerHasDouble) {
                 // Auto-pass: no venda to start
