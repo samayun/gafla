@@ -23,8 +23,8 @@ const RULES = {
                 items: [
                     "প্রতিটি খেলোয়াড় ৭টি করে তাস পায়।",
                     "বাকি তাসগুলো বোনইয়ার্ডে (স্টকপাইল) থাকে।",
-                    "যার কাছে 0:0 (ডাবল ব্ল্যাংক) তাস আছে সে প্রথমে খেলবে।",
-                    "0:0 দিয়েই খেলা শুরু করতে হবে — এটা বাধ্যতামূলক।",
+                    "গেমের প্রথম রাউন্ডে: যার কাছে 0:0 আছে সে প্রথমে খেলবে এবং 0:0 দিয়েই শুরু করতে হবে।",
+                    "পরের প্রতিটি রাউন্ডে: জয়ী (বা ব্লক হলে ব্লকার) প্রথম চাল দেবে — নিজের যেকোনো ভেন্ডা (1:1, 2:2, 3:3 ইত্যাদি) দিয়ে। 0:0 লাগে না। ভেন্ডা না থাকলে পাস।",
                 ],
             },
             {
@@ -81,8 +81,8 @@ const RULES = {
                 items: [
                     "Each player is dealt 7 tiles.",
                     "Remaining tiles go to the boneyard (stock).",
-                    "The player holding the 0:0 (double blank) tile plays first.",
-                    "The first move MUST be the 0:0 tile — this is mandatory.",
+                    "Game round 1: Player with 0:0 plays first and MUST start with 0:0.",
+                    "Round 2+: Winner (or blocker) starts first with any venda from their hand — 0:0 not required. If no venda, they pass.",
                 ],
             },
             {

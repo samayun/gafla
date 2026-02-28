@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { connectSocket, resetSocket } from "@/lib/client-socket";
+import { connectSocket } from "@/lib/client-socket";
 import type { SanitizedState } from "@/lib/game-engine";
 import type { Socket } from "socket.io-client";
 
@@ -27,6 +27,10 @@ interface RoundResult {
     blocked: boolean;
     roundPoints: number[];
     totalScores: number[];
+    gameOver?: boolean;
+    gameWinnerSeat?: number;
+    gameWinnerName?: string;
+    winningPoints?: number;
 }
 
 function DominoTile({
@@ -54,10 +58,16 @@ function DominoTile({
         </div>
     );
 
+    const handleInteraction = (e: React.MouseEvent | React.TouchEvent) => {
+        if (e.type === "touchend") e.preventDefault();
+        if ((playable || inHand) && onClick) onClick();
+    };
+
     return (
         <div
             className={`domino ${horizontal ? "horizontal" : ""} ${playable ? "playable" : ""} ${inHand ? "in-hand" : ""} ${small ? "small" : ""}`}
-            onClick={playable || inHand ? onClick : undefined}
+            onClick={handleInteraction}
+            onTouchEnd={handleInteraction}
         >
             {half(a)}
             <div className="divider" />
@@ -90,7 +100,7 @@ function GamePage() {
         players: { username: string; displayName: string; seatIndex: number; connected: boolean }[];
         status: string;
         creator: string;
-        rules: { mustStartWith00: boolean; blockerGetsZero: boolean };
+        rules: { firstRoundStartWith00?: boolean; blockerGetsZero?: boolean; winningPoints?: number; maximumVenda?: number };
     } | null>(null);
     const [copied, setCopied] = useState(false);
 
@@ -146,6 +156,20 @@ function GamePage() {
             router.replace("/signin");
         });
 
+        socket.on("auto-pass", (data: { playerName: string; message: string }) => {
+            showToast(data.message, false);
+        });
+
+        socket.on("left-room", () => {
+            setGameState(null);
+            setView("seat-select");
+            router.push("/lobby");
+        });
+
+        socket.on("player-left", (data: { displayName: string; message: string }) => {
+            showToast(data.message, false);
+        });
+
         return () => {
             socket.off("joined");
             socket.off("rejoined");
@@ -154,6 +178,9 @@ function GamePage() {
             socket.off("error");
             socket.off("room-info");
             socket.off("auth-error");
+            socket.off("auto-pass");
+            socket.off("left-room");
+            socket.off("player-left");
         };
     }, [token, roomCode, showToast, router]);
 
@@ -213,9 +240,8 @@ function GamePage() {
         socketRef.current?.emit("next-round");
     };
 
-    const exitGame = () => {
-        resetSocket();
-        router.push("/lobby");
+    const leaveRoom = () => {
+        socketRef.current?.emit("leave-room");
     };
 
     const playableMoves = useMemo(() => {
@@ -223,12 +249,34 @@ function GamePage() {
             return [];
 
         if (gameState.board.length === 0) {
-            const has00 = gameState.myHand.some((c) => c.a === 0 && c.b === 0);
-            if (has00) {
-                const idx = gameState.myHand.findIndex((c) => c.a === 0 && c.b === 0);
-                return [{ idx, side: "tail" as const }];
+            const isFirstRound = gameState.round === 1;
+            const firstRoundStartWith00 = gameState.rules?.firstRoundStartWith00 ?? true;
+
+            if (isFirstRound && firstRoundStartWith00) {
+                const has00 = gameState.myHand.some((c) => c.a === 0 && c.b === 0);
+                if (has00) {
+                    const idx = gameState.myHand.findIndex((c) => c.a === 0 && c.b === 0);
+                    return [{ idx, side: "tail" as const }];
+                }
+                return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
             }
-            return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
+
+            if (isFirstRound && !firstRoundStartWith00) {
+                return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
+            }
+
+            // Round 2+: winner can start with any card. Non-winner must play venda or pass.
+            const isWinnerStarting = gameState.mySeat === gameState.lastWinner;
+            if (isWinnerStarting) {
+                return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
+            }
+            const hasDouble = gameState.myHand.some((c) => c.a === c.b);
+            if (hasDouble) {
+                return gameState.myHand
+                    .map((c, i) => (c.a === c.b ? { idx: i, side: "tail" as const } : null))
+                    .filter(Boolean) as { idx: number; side: "head" | "tail" }[];
+            }
+            return [];
         }
 
         const head = gameState.board[0].a;
@@ -247,7 +295,7 @@ function GamePage() {
 
     const copyInvite = async () => {
         const url = `${window.location.origin}/game?room=${roomCode}`;
-        await navigator.clipboard.writeText(url).catch(() => {});
+        await navigator.clipboard.writeText(url).catch(() => { });
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
@@ -372,7 +420,7 @@ function GamePage() {
                     <div className="stat-badge hide-mobile">
                         আমি: <span style={{ color: "var(--accent-secondary)" }}>{user.displayName}</span>
                     </div>
-                    <button className="stat-badge exit-btn" onClick={exitGame}>
+                    <button className="stat-badge exit-btn" onClick={leaveRoom}>
                         বের হন
                     </button>
                 </div>
@@ -405,6 +453,92 @@ function GamePage() {
                                     ? "শুরু করার জন্য প্রস্তুত!"
                                     : "কমপক্ষে ২ জন দরকার"}
                             </p>
+
+                            {/* Room Rules Config - only shown to creator */}
+                            {gameState?.creator === user.username && (
+                                <div className="room-rules-config">
+                                    <h4>রুমের নিয়ম / Room Rules</h4>
+                                    <label className="rule-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={gameState?.rules?.firstRoundStartWith00 ?? true}
+                                            onChange={(e) =>
+                                                socketRef.current?.emit("update-rules", {
+                                                    firstRoundStartWith00: e.target.checked,
+                                                })
+                                            }
+                                        />
+                                        <span className="toggle-slider" />
+                                        <span className="toggle-label">
+                                            শুধু গেমের প্রথম রাউন্ডে 0:0। পরের রাউন্ড = জয়ী ভেন্ডা দিয়ে শুরু
+                                            <small>0:0 only in game's first round. Later rounds = winner starts with venda</small>
+                                        </span>
+                                    </label>
+                                    <label className="rule-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={gameState?.rules?.blockerGetsZero ?? false}
+                                            onChange={(e) =>
+                                                socketRef.current?.emit("update-rules", {
+                                                    blockerGetsZero: e.target.checked,
+                                                })
+                                            }
+                                        />
+                                        <span className="toggle-slider" />
+                                        <span className="toggle-label">
+                                            শর্ট/ব্লকে ব্লকার শূন্য পয়েন্ট পাবে
+                                            <small>Blocker gets zero on block</small>
+                                        </span>
+                                    </label>
+                                    <div className="rule-input-row">
+                                        <label className="toggle-label">
+                                            জয়ের পয়েন্ট / Winning Points
+                                            <small>Default 100</small>
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min={10}
+                                            max={500}
+                                            value={gameState?.rules?.winningPoints ?? 100}
+                                            onChange={(e) => {
+                                                const v = parseInt(e.target.value, 10);
+                                                if (!isNaN(v)) socketRef.current?.emit("update-rules", { winningPoints: v });
+                                            }}
+                                            className="winning-points-input"
+                                        />
+                                    </div>
+                                    <div className="rule-input-row">
+                                        <label className="toggle-label">
+                                            সর্বোচ্চ ভেন্ডা / Max Venda per Hand
+                                            <small>No player gets more. Default 4</small>
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={7}
+                                            value={gameState?.rules?.maximumVenda ?? 4}
+                                            onChange={(e) => {
+                                                const v = parseInt(e.target.value, 10);
+                                                if (!isNaN(v)) socketRef.current?.emit("update-rules", { maximumVenda: v });
+                                            }}
+                                            className="winning-points-input"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Show current rules for non-creators */}
+                            {gameState?.creator !== user.username && gameState?.rules && (
+                                <div className="room-rules-display">
+                                    <p>
+                                        {(gameState.rules?.firstRoundStartWith00 ?? true) ? "✓" : "✗"} গেম ১ম রাউন্ড: 0:0। পরের রাউন্ড: জয়ী ভেন্ডা &nbsp;|&nbsp;
+                                        {gameState.rules.blockerGetsZero ? "✓" : "✗"} ব্লকারের শূন্য &nbsp;|&nbsp;
+                                        জয়: {gameState.rules.winningPoints ?? 100} পয়েন্ট &nbsp;|&nbsp;
+                                        ম্যাক্স ভেন্ডা: {gameState.rules.maximumVenda ?? 4}
+                                    </p>
+                                </div>
+                            )}
+
                             {(gameState?.players.length || 0) >= 2 && (
                                 <button className="action-btn start-game" style={{ marginTop: "20px" }} onClick={startGame}>
                                     খেলা শুরু / START GAME
@@ -455,7 +589,11 @@ function GamePage() {
             {/* Action Bar */}
             <div className="action-bar">
                 {isMyTurn && (
-                    <div className="turn-indicator">আপনার পালা!</div>
+                    <div className="turn-indicator">
+                        {gameState?.board.length === 0 && gameState?.round && gameState.round > 1
+                            ? "ভেন্ডা দিয়ে শুরু করুন / Start with venda"
+                            : "আপনার পালা!"}
+                    </div>
                 )}
                 {canDraw && (
                     <button className="action-btn" onClick={handleDraw}>তাস তুলুন / DRAW</button>
@@ -488,15 +626,18 @@ function GamePage() {
 
             {/* Side Chooser */}
             {sideChoice && (
-                <div className="side-chooser-overlay">
-                    <div className="side-chooser">
+                <div className="side-chooser-overlay" onClick={() => setSideChoice(null)}>
+                    <div className="side-chooser" onClick={(e) => e.stopPropagation()}>
                         <h3>কোন দিকে খেলবেন?</h3>
                         <p className="en-text">Play on which side?</p>
+                        <div style={{ margin: "8px 0", display: "flex", justifyContent: "center" }}>
+                            <DominoTile a={sideChoice.card.a} b={sideChoice.card.b} />
+                        </div>
                         <div className="side-chooser-btns">
-                            <button className="side-btn head" onClick={() => chooseSide("head")}>
+                            <button className="side-btn head" onClick={() => chooseSide("head")} onTouchEnd={(e) => { e.preventDefault(); chooseSide("head"); }}>
                                 ← মাথা / HEAD
                             </button>
-                            <button className="side-btn tail" onClick={() => chooseSide("tail")}>
+                            <button className="side-btn tail" onClick={() => chooseSide("tail")} onTouchEnd={(e) => { e.preventDefault(); chooseSide("tail"); }}>
                                 লেজ / TAIL →
                             </button>
                         </div>
@@ -504,38 +645,59 @@ function GamePage() {
                 </div>
             )}
 
-            {/* Round End */}
+            {/* Round End / Game Over */}
             {roundResult && (
                 <div className="game-overlay">
                     <div className="game-modal">
                         <h2 style={{ marginBottom: "15px", fontSize: "1.6rem" }}>
-                            {roundResult.blocked ? "গেম ব্লক! / BLOCKED" : "রাউন্ড শেষ / ROUND OVER"}
+                            {roundResult.gameOver ? "গেম শেষ! / GAME OVER" : roundResult.blocked ? "গেম ব্লক! / BLOCKED" : "রাউন্ড শেষ / ROUND OVER"}
                         </h2>
                         <h2 style={{ color: "var(--accent-primary)", marginBottom: "10px" }}>
-                            {roundResult.winnerName} জিতেছে!
+                            {roundResult.gameOver && roundResult.gameWinnerName
+                                ? `${roundResult.gameWinnerName} খেলা জিতেছে!`
+                                : `${roundResult.winnerName} রাউন্ড জিতেছে!`}
                         </h2>
-                        {roundResult.blocked && (
+                        {roundResult.blocked && !roundResult.gameOver && (
                             <p style={{ color: "var(--accent-secondary)", fontWeight: 800, marginBottom: "10px" }}>
                                 মাস্টারস্ট্রোক ব্লক!
+                            </p>
+                        )}
+                        {roundResult.gameOver && (
+                            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", marginBottom: "10px" }}>
+                                জয়ের লক্ষ্য: {roundResult.winningPoints ?? 100} পয়েন্ট
+                            </p>
+                        )}
+                        {!roundResult.gameOver && (
+                            <p style={{ color: "var(--text-secondary)", fontSize: "0.8rem", marginBottom: "8px" }}>
+                                পরের রাউন্ডে <strong>{roundResult.winnerName}</strong> (জয়ী) প্রথম চাল দেবেন — যেকোনো ভেন্ডা দিয়ে, ভেন্ডা না থাকলে পাস। 0:0 লাগবে না।
+                                <br />
+                                <small style={{ opacity: 0.8 }}>Winner starts next round with any venda — not 0:0</small>
                             </p>
                         )}
                         <div style={{ marginTop: "20px" }}>
                             {roundResult.roundPoints.map((pts, i) => {
                                 const player = gameState?.players.find((p) => p.seatIndex === i);
                                 if (!player) return null;
+                                const isGameWinner = roundResult.gameOver && roundResult.gameWinnerSeat === i;
                                 return (
-                                    <div key={i} className="score-row">
-                                        <span>{player.displayName}</span>
+                                    <div key={i} className={`score-row ${isGameWinner ? "winner-row" : ""}`}>
+                                        <span>{player.displayName}{isGameWinner ? " 🏆" : ""}</span>
                                         <span style={{ color: "var(--accent-primary)", fontWeight: 800 }}>
-                                            +{pts} পয়েন্ট (মোট: {roundResult.totalScores[i]})
+                                            +{pts} (মোট: {roundResult.totalScores[i]})
                                         </span>
                                     </div>
                                 );
                             })}
                         </div>
-                        <button className="btn-prime" onClick={handleNextRound}>
-                            পরের রাউন্ড / NEXT ROUND
-                        </button>
+                        {roundResult.gameOver ? (
+                            <button className="btn-prime" onClick={leaveRoom} style={{ marginTop: "16px" }}>
+                                লবিতে ফিরুন / Back to Lobby
+                            </button>
+                        ) : (
+                            <button className="btn-prime" onClick={handleNextRound}>
+                                পরের রাউন্ড / NEXT ROUND
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

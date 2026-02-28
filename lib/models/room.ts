@@ -14,8 +14,10 @@ export interface IPlayer {
 }
 
 export interface IRoomRules {
-    mustStartWith00: boolean;
+    firstRoundStartWith00: boolean;
     blockerGetsZero: boolean;
+    winningPoints: number;
+    maximumVenda: number;
 }
 
 export interface IRoom extends Document {
@@ -30,6 +32,7 @@ export interface IRoom extends Document {
     scores: number[];
     passes: number[];
     round: number;
+    lastWinner: number;
     rules: IRoomRules;
     createdAt: Date;
     updatedAt: Date;
@@ -53,8 +56,10 @@ const PlayerSchema = new Schema<IPlayer>(
 
 const RulesSchema = new Schema<IRoomRules>(
     {
-        mustStartWith00: { type: Boolean, default: true },
-        blockerGetsZero: { type: Boolean, default: false },
+        firstRoundStartWith00: { type: Boolean, default: true },
+        blockerGetsZero: { type: Boolean, default: true },
+        winningPoints: { type: Number, default: 100 },
+        maximumVenda: { type: Number, default: 4 },
     },
     { _id: false }
 );
@@ -76,6 +81,7 @@ const RoomSchema = new Schema<IRoom>(
         scores: { type: [Number], default: [0, 0, 0, 0] },
         passes: { type: [Number], default: [0, 0, 0, 0] },
         round: { type: Number, default: 0 },
+        lastWinner: { type: Number, default: -1 },
         rules: { type: RulesSchema, default: () => ({}) },
     },
     { timestamps: true }

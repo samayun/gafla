@@ -35,8 +35,8 @@ const steps = [
         num: "৫",
         title: "খেলা শুরু করুন",
         titleEn: "Start the Game",
-        desc: "কমপক্ষে ২ জন খেলোয়াড় রুমে ঢুকলে যেকেউ 'খেলা শুরু' বাটন চাপতে পারবেন। প্রতি খেলোয়াড় ৭টি করে তাস পাবে। যার কাছে 0:0 তাস থাকবে সে প্রথম খেলবে।",
-        descEn: "Once 2+ players join, anyone can start the game. 7 tiles each. Player with 0:0 goes first.",
+        desc: "কমপক্ষে ২ জন খেলোয়াড় রুমে ঢুকলে যেকেউ 'খেলা শুরু' বাটন চাপতে পারবেন। প্রতি খেলোয়াড় ৭টি করে তাস পাবে। গেমের প্রথম রাউন্ডে যার কাছে 0:0 আছে সে প্রথম খেলবে। পরের রাউন্ডে জয়ী ভেন্ডা দিয়ে প্রথম চাল দেয়।",
+        descEn: "Once 2+ players join, anyone can start. 7 tiles each. Round 1: player with 0:0 goes first. Round 2+: winner starts with venda.",
     },
     {
         num: "৬",

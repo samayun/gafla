@@ -14,6 +14,7 @@ import {
     handPoints,
     getBlockedWinner,
     sanitizeForPlayer,
+    hasDouble,
 } from "./game-engine";
 
 // username → Set<socketId> for multi-tab support
@@ -86,6 +87,30 @@ export function initSocketHandlers(io: SocketServer) {
             // Rejoin any active room this user is in
             await rejoinActiveRoom(io, socket, username);
 
+            // --- LEAVE ROOM ---
+            socket.on("leave-room", async () => {
+                try {
+                    await connectDB();
+                    const meta = socketMeta.get(socket.id);
+                    if (!meta?.currentRoom) return;
+
+                    const roomCode = meta.currentRoom;
+                    const room = await Room.findOne({ code: roomCode });
+                    if (!room) {
+                        meta.currentRoom = "";
+                        meta.currentSeat = -1;
+                        socket.leave(roomCode);
+                        emitToUser(io, username, "left-room", { room: roomCode });
+                        return;
+                    }
+
+                    await removePlayerFromRoom(io, room, username);
+                    emitToUser(io, username, "left-room", { room: roomCode });
+                } catch (err) {
+                    console.error("leave-room error:", err);
+                }
+            });
+
             // --- JOIN ROOM ---
             socket.on("join-room", async (data: { room: string; seat: number }) => {
                 try {
@@ -93,6 +118,14 @@ export function initSocketHandlers(io: SocketServer) {
                     const roomCode = data.room.toUpperCase();
                     const meta = socketMeta.get(socket.id);
                     if (!meta) return;
+
+                    // If already in another room, leave it first
+                    if (meta.currentRoom && meta.currentRoom !== roomCode) {
+                        const oldRoom = await Room.findOne({ code: meta.currentRoom });
+                        if (oldRoom) {
+                            await removePlayerFromRoom(io, oldRoom, username);
+                        }
+                    }
 
                     meta.currentRoom = roomCode;
                     meta.currentSeat = data.seat;
@@ -182,18 +215,29 @@ export function initSocketHandlers(io: SocketServer) {
                     }
 
                     const deck = createShuffledDeck();
-                    const { hands, boneyard } = dealHands(deck);
+                    const maxVenda = room.rules?.maximumVenda ?? 4;
+                    const { hands, boneyard } = dealHands(deck, maxVenda);
 
                     room.board = [];
                     room.hands = hands;
                     room.boneyard = boneyard;
                     room.status = "playing";
                     room.passes = [0, 0, 0, 0];
-                    room.turn = findStarter(hands);
                     room.round = (room.round || 0) + 1;
 
+                    const isFirstRound = room.round === 1;
+
+                    if (isFirstRound && (room.rules?.firstRoundStartWith00 ?? true)) {
+                        room.turn = findStarter(hands);
+                    } else if (room.lastWinner >= 0) {
+                        room.turn = room.lastWinner;
+                    } else {
+                        room.turn = findStarter(hands);
+                    }
+
                     await room.save();
-                    broadcastState(io, room);
+
+                    await processAutoTurns(io, room);
                     console.log(`🎮 Game started in ${meta.currentRoom}, round ${room.round}`);
                 } catch (err) {
                     console.error("start-game error:", err);
@@ -215,7 +259,10 @@ export function initSocketHandlers(io: SocketServer) {
                     }
 
                     const hand = room.hands[meta.currentSeat];
-                    const validation = validatePlay(hand, data.cardIdx, data.side, room.board);
+                    const isWinnerStarting = room.board.length === 0 && room.turn === room.lastWinner;
+                    const require00ForFirstMove = !isWinnerStarting && room.round === 1 && (room.rules?.firstRoundStartWith00 ?? true);
+                    const winnerStartsWithVenda = !isWinnerStarting && room.round > 1;
+                    const validation = validatePlay(hand, data.cardIdx, data.side, room.board, require00ForFirstMove, winnerStartsWithVenda);
                     if (!validation.valid) {
                         socket.emit("error", { message: validation.reason || "Invalid move" });
                         return;
@@ -250,8 +297,7 @@ export function initSocketHandlers(io: SocketServer) {
                     }
 
                     room.turn = nextActiveTurn(room, meta.currentSeat);
-                    await room.save();
-                    broadcastState(io, room);
+                    await processAutoTurns(io, room);
                 } catch (err) {
                     console.error("play-card error:", err);
                 }
@@ -289,6 +335,8 @@ export function initSocketHandlers(io: SocketServer) {
                         boardSnapshot: room.board,
                     });
 
+                    // After drawing, check if the player who drew now has a playable card
+                    // If not and boneyard is empty, next player logic will handle it
                     await room.save();
                     broadcastState(io, room);
                 } catch (err) {
@@ -307,12 +355,16 @@ export function initSocketHandlers(io: SocketServer) {
                     if (!room || room.status !== "playing") return;
                     if (room.turn !== meta.currentSeat) return;
 
-                    const possibles = getPlayableMoves(room.hands[meta.currentSeat], room.board);
-                    if (possibles.length > 0) {
+                    const hand = room.hands[meta.currentSeat];
+                    const possibles = getPlayableMoves(hand, room.board);
+                    const isWinnerStarting = room.board.length === 0 && room.turn === room.lastWinner;
+                    const vendaRequired = !isWinnerStarting && room.board.length === 0 && room.round > 1;
+                    const hasNoVenda = vendaRequired && !hasDouble(hand);
+                    if (possibles.length > 0 && !hasNoVenda) {
                         socket.emit("error", { message: "আপনার খেলার মতো তাস আছে!" });
                         return;
                     }
-                    if (room.boneyard.length > 0) {
+                    if (room.boneyard.length > 0 && !hasNoVenda) {
                         socket.emit("error", { message: "আগে বোনইয়ার্ড থেকে তাস তুলুন!" });
                         return;
                     }
@@ -339,8 +391,7 @@ export function initSocketHandlers(io: SocketServer) {
                     }
 
                     room.turn = nextActiveTurn(room, meta.currentSeat);
-                    await room.save();
-                    broadcastState(io, room);
+                    await processAutoTurns(io, room);
                 } catch (err) {
                     console.error("pass-turn error:", err);
                 }
@@ -357,25 +408,33 @@ export function initSocketHandlers(io: SocketServer) {
                     if (!room) return;
 
                     const deck = createShuffledDeck();
-                    const { hands, boneyard } = dealHands(deck);
+                    const maxVenda = room.rules?.maximumVenda ?? 4;
+                    const { hands, boneyard } = dealHands(deck, maxVenda);
 
                     room.board = [];
                     room.hands = hands;
                     room.boneyard = boneyard;
                     room.status = "playing";
                     room.passes = [0, 0, 0, 0];
-                    room.turn = findStarter(hands);
                     room.round = (room.round || 0) + 1;
 
+                    const activeSeats = room.players.map((p: { seatIndex: number }) => p.seatIndex);
+                    const winnerStillInRoom = room.lastWinner >= 0 && activeSeats.includes(room.lastWinner);
+                    if (winnerStillInRoom) {
+                        room.turn = room.lastWinner;
+                    } else {
+                        room.turn = activeSeats.length > 0 ? activeSeats[0]! : findStarter(hands);
+                    }
+
                     await room.save();
-                    broadcastState(io, room);
+                    await processAutoTurns(io, room);
                 } catch (err) {
                     console.error("next-round error:", err);
                 }
             });
 
             // --- UPDATE RULES ---
-            socket.on("update-rules", async (data: { mustStartWith00?: boolean; blockerGetsZero?: boolean }) => {
+            socket.on("update-rules", async (data: { firstRoundStartWith00?: boolean; blockerGetsZero?: boolean; winningPoints?: number; maximumVenda?: number }) => {
                 try {
                     await connectDB();
                     const meta = socketMeta.get(socket.id);
@@ -392,8 +451,16 @@ export function initSocketHandlers(io: SocketServer) {
                         return;
                     }
 
-                    if (data.mustStartWith00 !== undefined) room.rules.mustStartWith00 = data.mustStartWith00;
+                    if (data.firstRoundStartWith00 !== undefined) room.rules.firstRoundStartWith00 = data.firstRoundStartWith00;
                     if (data.blockerGetsZero !== undefined) room.rules.blockerGetsZero = data.blockerGetsZero;
+                    if (data.winningPoints !== undefined) {
+                        const v = Math.max(10, Math.min(500, data.winningPoints));
+                        room.rules.winningPoints = v;
+                    }
+                    if (data.maximumVenda !== undefined) {
+                        const mv = Math.max(1, Math.min(7, data.maximumVenda));
+                        room.rules.maximumVenda = mv;
+                    }
                     await room.save();
                     broadcastState(io, room);
                 } catch (err) {
@@ -461,6 +528,52 @@ export function initSocketHandlers(io: SocketServer) {
     });
 }
 
+async function removePlayerFromRoom(io: SocketServer, room: IRoom, username: string): Promise<void> {
+    const playerIdx = room.players.findIndex((p) => p.username === username);
+    if (playerIdx < 0) return;
+
+    const leavingPlayer = room.players[playerIdx];
+    room.players.splice(playerIdx, 1);
+
+    io.to(room.code).emit("player-left", {
+        username,
+        displayName: leavingPlayer?.displayName || username,
+        message: `${leavingPlayer?.displayName || username} রুম ছেড়ে চলে গেছে`,
+    });
+
+    if (room.status === "playing") {
+        room.status = "lobby";
+        room.board = [];
+        room.hands = [[], [], [], []];
+        room.boneyard = [];
+        room.passes = [0, 0, 0, 0];
+        room.turn = 0;
+        room.round = 0;
+        room.lastWinner = -1;
+        room.scores = [0, 0, 0, 0];
+    }
+
+    if (room.creator === username && room.players.length > 0) {
+        room.creator = room.players[0].username;
+    }
+
+    const allSockets = userSockets.get(username);
+    if (allSockets) {
+        for (const sid of allSockets) {
+            const s = io.sockets.sockets.get(sid);
+            if (s) s.leave(room.code);
+            const m = socketMeta.get(sid);
+            if (m) {
+                m.currentRoom = "";
+                m.currentSeat = -1;
+            }
+        }
+    }
+
+    await room.save();
+    broadcastState(io, room);
+}
+
 async function rejoinActiveRoom(io: SocketServer, socket: Socket, username: string) {
     try {
         await connectDB();
@@ -503,6 +616,99 @@ function nextActiveTurn(room: IRoom, currentSeat: number): number {
     return activeSeatIndices[0];
 }
 
+/**
+ * After advancing the turn, check if the next player(s) should auto-pass
+ * (no playable moves + boneyard empty) or if blocked. Alerts all players.
+ */
+async function processAutoTurns(io: SocketServer, room: IRoom): Promise<void> {
+    const maxIterations = room.players.length;
+
+    for (let i = 0; i < maxIterations; i++) {
+        const currentSeat = room.turn;
+        const hand = room.hands[currentSeat];
+        const moves = getPlayableMoves(hand, room.board);
+
+        // Venda (double) requirement: on round > 1 with empty board, must play a double
+        // Exception: winner starting can play any card
+        if (room.board.length === 0 && room.round > 1) {
+            const isWinnerStarting = room.turn === room.lastWinner;
+            if (isWinnerStarting) break; // winner can play any card, no auto-pass
+            const playerHasDouble = hasDouble(hand);
+            if (!playerHasDouble) {
+                // Auto-pass: no venda to start
+                room.passes[currentSeat] = 1;
+                const player = room.players.find((p) => p.seatIndex === currentSeat);
+                const playerName = player?.displayName || `Player ${currentSeat + 1}`;
+
+                await Move.create({
+                    roomCode: room.code,
+                    round: room.round,
+                    playerIndex: currentSeat,
+                    playerName,
+                    action: "pass",
+                    boardSnapshot: room.board,
+                });
+
+                io.to(room.code).emit("auto-pass", {
+                    seat: currentSeat,
+                    playerName,
+                    message: `${playerName} অটো-পাস (ভেন্ডা নেই) / Auto-pass (no double)`,
+                });
+
+                const allPassed = room.players.every(
+                    (p) => room.passes[p.seatIndex] === 1
+                );
+                if (allPassed) {
+                    // Nobody has a double — just let any card play. Reset passes and break.
+                    room.passes = [0, 0, 0, 0];
+                    break;
+                }
+
+                room.turn = nextActiveTurn(room, currentSeat);
+                continue;
+            }
+            // Player has a double, they must play it — stop auto-turn
+            break;
+        }
+
+        if (moves.length > 0) break;
+        if (room.boneyard.length > 0) break;
+
+        room.passes[currentSeat] = 1;
+        const player = room.players.find((p) => p.seatIndex === currentSeat);
+        const playerName = player?.displayName || `Player ${currentSeat + 1}`;
+
+        await Move.create({
+            roomCode: room.code,
+            round: room.round,
+            playerIndex: currentSeat,
+            playerName,
+            action: "pass",
+            boardSnapshot: room.board,
+        });
+
+        io.to(room.code).emit("auto-pass", {
+            seat: currentSeat,
+            playerName,
+            message: `${playerName} অটো-পাস হয়েছে (কোনো চাল নেই)`,
+        });
+
+        const allPassed = room.players.every(
+            (p) => room.passes[p.seatIndex] === 1
+        );
+        if (allPassed) {
+            const winner = getBlockedWinner(room.hands);
+            await endRound(io, room, winner, true);
+            return;
+        }
+
+        room.turn = nextActiveTurn(room, currentSeat);
+    }
+
+    await room.save();
+    broadcastState(io, room);
+}
+
 async function endRound(
     io: SocketServer,
     room: IRoom,
@@ -510,11 +716,11 @@ async function endRound(
     blocked: boolean
 ) {
     room.status = "ended";
+    room.lastWinner = winnerSeat;
     const pts = room.hands.map(handPoints);
     pts[winnerSeat] = 0;
 
     if (blocked && room.rules.blockerGetsZero) {
-        // The player who caused the block also gets zero
         pts[winnerSeat] = 0;
     }
 
@@ -522,15 +728,28 @@ async function endRound(
         room.scores[i] = (room.scores[i] || 0) + pts[i];
     }
 
+    const winningPoints = room.rules?.winningPoints ?? 100;
+    const maxScore = Math.max(...room.scores);
+    const gameOver = maxScore >= winningPoints;
+    const gameWinnerSeat = gameOver ? room.scores.indexOf(maxScore) : -1;
+    const gameWinnerPlayer = gameWinnerSeat >= 0 ? room.players.find((p) => p.seatIndex === gameWinnerSeat) : null;
+
     await room.save();
 
     const winnerPlayer = room.players.find((p) => p.seatIndex === winnerSeat);
+    const winnerName = winnerPlayer?.displayName || `Player ${winnerSeat + 1}`;
     io.to(room.code).emit("round-end", {
         winner: winnerSeat,
-        winnerName: winnerPlayer?.displayName || `Player ${winnerSeat + 1}`,
+        winnerName,
         blocked,
         roundPoints: pts,
         totalScores: room.scores,
+        gameOver,
+        gameWinnerSeat,
+        gameWinnerName: gameWinnerPlayer?.displayName || (gameWinnerSeat >= 0 ? `Player ${gameWinnerSeat + 1}` : ""),
+        winningPoints,
+        nextRoundStarter: winnerSeat,
+        nextRoundStarterName: winnerName,
     });
 
     broadcastState(io, room);

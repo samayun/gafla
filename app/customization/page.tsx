@@ -4,16 +4,17 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 
 interface Prefs {
-    theme: "dark" | "ocean" | "forest" | "royal";
+    theme: "dark" | "light" | "ocean" | "forest" | "royal";
     cardSize: "small" | "medium" | "large";
     dotStyle: "classic" | "neon" | "minimal";
 }
 
 const THEMES = {
-    dark: { label: "ডার্ক / Dark", bg: "#020617", accent: "#38bdf8", secondary: "#ec4899" },
-    ocean: { label: "সমুদ্র / Ocean", bg: "#0c1929", accent: "#06b6d4", secondary: "#8b5cf6" },
-    forest: { label: "বন / Forest", bg: "#0a1f0a", accent: "#22c55e", secondary: "#eab308" },
-    royal: { label: "রাজকীয় / Royal", bg: "#1a0a2e", accent: "#a855f7", secondary: "#f43f5e" },
+    dark: { label: "ডার্ক / Dark", bg: "#020617", accent: "#38bdf8", secondary: "#ec4899", text: "#f8fafc", textSec: "#94a3b8", glass: "rgba(15,23,42,0.85)", glassBorder: "rgba(255,255,255,0.1)", isLight: false },
+    light: { label: "লাইট / Light", bg: "#f0f4f8", accent: "#2563eb", secondary: "#db2777", text: "#1e293b", textSec: "#64748b", glass: "rgba(255,255,255,0.85)", glassBorder: "rgba(0,0,0,0.1)", isLight: true },
+    ocean: { label: "সমুদ্র / Ocean", bg: "#0c1929", accent: "#06b6d4", secondary: "#8b5cf6", text: "#f8fafc", textSec: "#94a3b8", glass: "rgba(15,23,42,0.85)", glassBorder: "rgba(255,255,255,0.1)", isLight: false },
+    forest: { label: "বন / Forest", bg: "#0a1f0a", accent: "#22c55e", secondary: "#eab308", text: "#f8fafc", textSec: "#94a3b8", glass: "rgba(15,23,42,0.85)", glassBorder: "rgba(255,255,255,0.1)", isLight: false },
+    royal: { label: "রাজকীয় / Royal", bg: "#1a0a2e", accent: "#a855f7", secondary: "#f43f5e", text: "#f8fafc", textSec: "#94a3b8", glass: "rgba(15,23,42,0.85)", glassBorder: "rgba(255,255,255,0.1)", isLight: false },
 };
 
 const CARD_SIZES = {
@@ -33,7 +34,7 @@ function getDefaultPrefs(): Prefs {
     try {
         const stored = localStorage.getItem("gafla_prefs");
         if (stored) return JSON.parse(stored);
-    } catch {}
+    } catch { /* empty */ }
     return { theme: "dark", cardSize: "medium", dotStyle: "classic" };
 }
 
@@ -146,7 +147,12 @@ function applyTheme(prefs: Prefs) {
     root.style.setProperty("--bg-color", theme.bg);
     root.style.setProperty("--accent-primary", theme.accent);
     root.style.setProperty("--accent-secondary", theme.secondary);
+    root.style.setProperty("--text-primary", theme.text);
+    root.style.setProperty("--text-secondary", theme.textSec);
+    root.style.setProperty("--glass", theme.glass);
+    root.style.setProperty("--glass-border", theme.glassBorder);
 
     root.setAttribute("data-card-size", prefs.cardSize);
     root.setAttribute("data-dot-style", prefs.dotStyle);
+    root.setAttribute("data-theme", theme.isLight ? "light" : "dark");
 }

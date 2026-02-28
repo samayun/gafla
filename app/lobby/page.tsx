@@ -14,14 +14,57 @@ function generateRoomCode(): string {
     return code;
 }
 
+interface RoomSeat {
+    occupied: boolean;
+    displayName?: string;
+    username?: string;
+}
+
+interface RoomInfo {
+    code: string;
+    creator: string;
+    status: string;
+    round: number;
+    playerCount: number;
+    seats: RoomSeat[];
+}
+
+function MiniTable({ seats, compact }: { seats: RoomSeat[]; compact?: boolean }) {
+    const cls = compact ? "mini-table compact" : "mini-table";
+    return (
+        <div className={cls}>
+            {/* Top seat */}
+            <div className={`mt-seat mt-top ${seats[2]?.occupied ? "occupied" : "empty"}`}>
+                <span>{seats[2]?.occupied ? seats[2].displayName : ""}</span>
+            </div>
+            {/* Middle row: left - center - right */}
+            <div className="mt-mid">
+                <div className={`mt-seat mt-left ${seats[3]?.occupied ? "occupied" : "empty"}`}>
+                    <span>{seats[3]?.occupied ? seats[3].displayName : ""}</span>
+                </div>
+                <div className="mt-center" />
+                <div className={`mt-seat mt-right ${seats[1]?.occupied ? "occupied" : "empty"}`}>
+                    <span>{seats[1]?.occupied ? seats[1].displayName : ""}</span>
+                </div>
+            </div>
+            {/* Bottom seat */}
+            <div className={`mt-seat mt-bottom ${seats[0]?.occupied ? "occupied" : "empty"}`}>
+                <span>{seats[0]?.occupied ? seats[0].displayName : ""}</span>
+            </div>
+        </div>
+    );
+}
+
 export default function LobbyPage() {
-    const { user, loading, logout } = useAuth();
+    const { user, token, loading, logout } = useAuth();
     const router = useRouter();
 
     const [joinCode, setJoinCode] = useState("");
     const [createdRoom, setCreatedRoom] = useState("");
     const [showShare, setShowShare] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [rooms, setRooms] = useState<RoomInfo[]>([]);
+    const [loadingRooms, setLoadingRooms] = useState(true);
 
     useEffect(() => {
         if (!loading && !user) {
@@ -32,16 +75,46 @@ export default function LobbyPage() {
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const r = params.get("room");
-        if (r) {
-            setJoinCode(r);
-        }
+        if (r) setJoinCode(r);
     }, []);
 
-    const handleCreateRoom = useCallback(() => {
+    // Fetch active rooms
+    const fetchRooms = useCallback(async () => {
+        if (!token) return;
+        try {
+            const res = await fetch("/api/rooms/list", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await res.json();
+            setRooms(data.rooms || []);
+        } catch {
+            // silent
+        } finally {
+            setLoadingRooms(false);
+        }
+    }, [token]);
+
+    useEffect(() => {
+        fetchRooms();
+        const interval = setInterval(fetchRooms, 5000);
+        return () => clearInterval(interval);
+    }, [fetchRooms]);
+
+    const handleCreateRoom = useCallback(async () => {
         const code = generateRoomCode();
         setCreatedRoom(code);
         setShowShare(true);
-    }, []);
+        try {
+            await fetch("/api/rooms/create", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ code }),
+            });
+            fetchRooms();
+        } catch {
+            // room will be created when user joins via socket
+        }
+    }, [token, fetchRooms]);
 
     const handleGoToRoom = useCallback(
         (code: string) => {
@@ -51,9 +124,7 @@ export default function LobbyPage() {
     );
 
     const handleJoinRoom = useCallback(() => {
-        if (joinCode.trim()) {
-            handleGoToRoom(joinCode.trim());
-        }
+        if (joinCode.trim()) handleGoToRoom(joinCode.trim());
     }, [joinCode, handleGoToRoom]);
 
     const getInviteUrl = useCallback(() => {
@@ -68,39 +139,30 @@ export default function LobbyPage() {
     }, [createdRoom, getInviteUrl]);
 
     const shareFacebook = useCallback(() => {
-        const url = getInviteUrl();
-        window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`, "_blank");
+        window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(getInviteUrl())}`, "_blank");
     }, [getInviteUrl]);
 
     const shareMessenger = useCallback(() => {
-        const url = getInviteUrl();
-        window.open(`fb-messenger://share/?link=${encodeURIComponent(url)}`, "_blank");
+        window.open(`fb-messenger://share/?link=${encodeURIComponent(getInviteUrl())}`, "_blank");
     }, [getInviteUrl]);
 
     const copyLink = useCallback(async () => {
         try {
             await navigator.clipboard.writeText(getInviteUrl());
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
         } catch {
-            const input = document.createElement("input");
-            input.value = getInviteUrl();
-            document.body.appendChild(input);
-            input.select();
-            document.execCommand("copy");
-            document.body.removeChild(input);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            /* fallback handled below */
         }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
     }, [getInviteUrl]);
 
     if (loading || !user) {
-        return (
-            <div className="page-center">
-                <div className="spinner" />
-            </div>
-        );
+        return <div className="page-center"><div className="spinner" /></div>;
     }
+
+    const hasFreeSeat = (r: RoomInfo) => r.seats.some((s) => !s.occupied);
+    const isMyRoom = (r: RoomInfo) => r.seats.some((s) => s.username === user.username);
+    const canClickRoom = (r: RoomInfo) => hasFreeSeat(r) || isMyRoom(r);
 
     return (
         <div className="lobby-page">
@@ -115,15 +177,13 @@ export default function LobbyPage() {
                     <Link href="/customization" className="nav-link">কাস্টমাইজ</Link>
                     <Link href="/rules" className="nav-link">নিয়ম</Link>
                     <Link href="/guide" className="nav-link">গাইড</Link>
-                    <button onClick={logout} className="btn-small btn-danger">
-                        লগ আউট
-                    </button>
+                    <button onClick={logout} className="btn-small btn-danger">লগ আউট</button>
                 </div>
             </header>
 
             <div className="lobby-main">
+                {/* Top actions */}
                 <div className="lobby-grid">
-                    {/* Create Room */}
                     <div className="lobby-card">
                         <h2>রুম তৈরি করুন</h2>
                         <p>নতুন রুম তৈরি করে বন্ধুদের আমন্ত্রণ জানান</p>
@@ -133,7 +193,6 @@ export default function LobbyPage() {
                         </button>
                     </div>
 
-                    {/* Join Room */}
                     <div className="lobby-card">
                         <h2>রুমে যোগ দিন</h2>
                         <p>রুম কোড দিয়ে খেলায় যোগ দিন</p>
@@ -148,15 +207,60 @@ export default function LobbyPage() {
                                 onKeyDown={(e) => e.key === "Enter" && handleJoinRoom()}
                                 maxLength={6}
                             />
-                            <button
-                                className="btn-prime"
-                                onClick={handleJoinRoom}
-                                disabled={!joinCode.trim()}
-                            >
+                            <button className="btn-prime" onClick={handleJoinRoom} disabled={!joinCode.trim()}>
                                 যোগ দিন / Join
                             </button>
                         </div>
                     </div>
+                </div>
+
+                {/* Active Rooms */}
+                <div className="rooms-section">
+                    <h2 className="section-title">
+                        সক্রিয় রুম / Active Rooms
+                        <span className="room-count">{rooms.length}</span>
+                    </h2>
+
+                    {loadingRooms ? (
+                        <div className="rooms-loading"><div className="spinner" /></div>
+                    ) : rooms.length === 0 ? (
+                        <div className="rooms-empty">
+                            <p>কোনো সক্রিয় রুম নেই। একটি তৈরি করুন!</p>
+                            <p className="en-text">No active rooms. Create one!</p>
+                        </div>
+                    ) : (
+                        <div className="rooms-grid">
+                            {rooms.map((r) => (
+                                <div
+                                    key={r.code}
+                                    className={`room-card ${!canClickRoom(r) ? "full" : ""} ${isMyRoom(r) ? "my-room" : ""}`}
+                                    onClick={() => canClickRoom(r) && handleGoToRoom(r.code)}
+                                >
+                                    <div className="room-card-header">
+                                        <span className="room-card-code">{r.code}</span>
+                                        <span className={`room-status-pill ${r.status}`}>
+                                            {r.status === "lobby" ? "অপেক্ষায়" : `রাউন্ড ${r.round}`}
+                                        </span>
+                                    </div>
+
+                                    <MiniTable seats={r.seats} />
+
+                                    <div className="room-card-footer">
+                                        <span className="player-count-badge">
+                                            {r.playerCount}/4 জন
+                                        </span>
+                                        {isMyRoom(r) ? (
+                                            <span className="join-hint rejoin">ফিরে যান / Rejoin</span>
+                                        ) : hasFreeSeat(r) ? (
+                                            <span className="join-hint">ক্লিক করে যোগ দিন</span>
+                                        ) : (
+                                            <span className="full-hint">টেবিল ভর্তি</span>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Share Modal */}
@@ -172,21 +276,15 @@ export default function LobbyPage() {
 
                             <div className="share-buttons">
                                 <button className="share-btn whatsapp" onClick={shareWhatsApp}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
-                                    </svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                                     WhatsApp
                                 </button>
                                 <button className="share-btn facebook" onClick={shareFacebook}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                        <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
-                                    </svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
                                     Facebook
                                 </button>
                                 <button className="share-btn messenger" onClick={shareMessenger}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                        <path d="M12 0C5.373 0 0 4.974 0 11.111c0 3.498 1.744 6.614 4.469 8.654V24l4.088-2.242c1.092.301 2.246.464 3.443.464 6.627 0 12-4.975 12-11.111S18.627 0 12 0zm1.191 14.963l-3.055-3.26-5.963 3.26L10.732 8.2l3.131 3.259L19.752 8.2l-6.561 6.763z" />
-                                    </svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.373 0 0 4.974 0 11.111c0 3.498 1.744 6.614 4.469 8.654V24l4.088-2.242c1.092.301 2.246.464 3.443.464 6.627 0 12-4.975 12-11.111S18.627 0 12 0zm1.191 14.963l-3.055-3.26-5.963 3.26L10.732 8.2l3.131 3.259L19.752 8.2l-6.561 6.763z"/></svg>
                                     Messenger
                                 </button>
                                 <button className="share-btn copy" onClick={copyLink}>
@@ -194,11 +292,7 @@ export default function LobbyPage() {
                                 </button>
                             </div>
 
-                            <button
-                                className="btn-prime"
-                                style={{ marginTop: "20px" }}
-                                onClick={() => handleGoToRoom(createdRoom)}
-                            >
+                            <button className="btn-prime" style={{ marginTop: "20px" }} onClick={() => handleGoToRoom(createdRoom)}>
                                 রুমে যান / Go to Room
                             </button>
                         </div>

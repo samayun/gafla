@@ -14,13 +14,36 @@ export function createShuffledDeck(): ICard[] {
     return deck;
 }
 
-export function dealHands(deck: ICard[]): { hands: ICard[][]; boneyard: ICard[] } {
+function countDoubles(hand: ICard[]): number {
+    return hand.filter((c) => c.a === c.b).length;
+}
+
+function rawDeal(deck: ICard[]): { hands: ICard[][]; boneyard: ICard[] } {
     const hands: ICard[][] = [];
     const remaining = [...deck];
     for (let i = 0; i < 4; i++) {
         hands.push(remaining.splice(0, 7));
     }
     return { hands, boneyard: remaining };
+}
+
+export function dealHands(deck: ICard[], maxVenda: number = 4): { hands: ICard[][]; boneyard: ICard[] } {
+    const MAX_ATTEMPTS = 50;
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        const shuffled = [...deck];
+        if (attempt > 0) {
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+        }
+        const result = rawDeal(shuffled);
+        const hasTooManyDoubles = result.hands.some((h) => countDoubles(h) > maxVenda);
+        if (!hasTooManyDoubles) return result;
+    }
+
+    return rawDeal(deck);
 }
 
 export function findStarter(hands: ICard[][]): number {
@@ -89,11 +112,19 @@ export function placeCard(
     return newBoard;
 }
 
+/**
+ * Empty board (first move of round):
+ * - Round 1 + firstRoundStartWith00: 0:0 holder must play 0:0
+ * - Round 2+: non-winner must play any venda (double), or pass if none.
+ *   Winner starting can play any card (no 0:0 or venda required).
+ */
 export function validatePlay(
     hand: ICard[],
     cardIdx: number,
     side: "head" | "tail",
-    board: ICard[]
+    board: ICard[],
+    require00ForFirstMove: boolean,
+    winnerStartsWithVenda: boolean
 ): { valid: boolean; reason?: string } {
     if (cardIdx < 0 || cardIdx >= hand.length) {
         return { valid: false, reason: "Invalid card index" };
@@ -102,9 +133,17 @@ export function validatePlay(
     const card = hand[cardIdx];
 
     if (board.length === 0) {
-        const has00 = hand.some((c) => c.a === 0 && c.b === 0);
-        if (has00 && (card.a !== 0 || card.b !== 0)) {
-            return { valid: false, reason: "0:0 দিয়ে শুরু করতে হবে / Must start with 0:0!" };
+        if (require00ForFirstMove) {
+            const has00 = hand.some((c) => c.a === 0 && c.b === 0);
+            if (has00 && (card.a !== 0 || card.b !== 0)) {
+                return { valid: false, reason: "0:0 দিয়ে শুরু করতে হবে / Must start with 0:0!" };
+            }
+        }
+        if (winnerStartsWithVenda) {
+            const hasDouble = hand.some((c) => c.a === c.b);
+            if (hasDouble && card.a !== card.b) {
+                return { valid: false, reason: "যেকোনো ভেন্ডা (ডাবল) দিয়ে শুরু করুন / Start with any venda (double)!" };
+            }
         }
         return { valid: true };
     }
@@ -115,6 +154,11 @@ export function validatePlay(
     if (side === "tail" && canPlayOn(card, tail)) return { valid: true };
 
     return { valid: false, reason: "তাস বোর্ডের সাথে মিলছে না / Card doesn't match" };
+}
+
+/** Check if a player has any double tile */
+export function hasDouble(hand: ICard[]): boolean {
+    return hand.some((c) => c.a === c.b);
 }
 
 export function isBlocked(hands: ICard[][], board: ICard[], boneyard: ICard[]): boolean {
@@ -147,6 +191,7 @@ export function sanitizeForPlayer(room: IRoom, playerSeat: number) {
         scores: room.scores,
         passes: room.passes,
         round: room.round,
+        lastWinner: room.lastWinner,
         rules: room.rules,
         creator: room.creator,
         players: room.players.map((p) => ({
