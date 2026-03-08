@@ -18,17 +18,25 @@ function countDoubles(hand: ICard[]): number {
     return hand.filter((c) => c.a === c.b).length;
 }
 
-function rawDeal(deck: ICard[]): { hands: ICard[][]; boneyard: ICard[] } {
-    const hands: ICard[][] = [];
-    const remaining = [...deck];
-    for (let i = 0; i < 4; i++) {
-        hands.push(remaining.splice(0, 7));
-    }
-    return { hands, boneyard: remaining };
-}
-
-export function dealHands(deck: ICard[], maxVenda: number = 4): { hands: ICard[][]; boneyard: ICard[] } {
+/**
+ * Deal hands to specific seats. Non-active seats get empty arrays.
+ * Each active player gets 7 tiles, rest go to boneyard.
+ */
+export function dealHands(
+    deck: ICard[],
+    maxVenda: number = 4,
+    activeSeats: number[] = [0, 1, 2, 3]
+): { hands: ICard[][]; boneyard: ICard[] } {
     const MAX_ATTEMPTS = 50;
+
+    function rawDealToSeats(cards: ICard[]): { hands: ICard[][]; boneyard: ICard[] } {
+        const hands: ICard[][] = [[], [], [], []];
+        const remaining = [...cards];
+        for (const seat of activeSeats) {
+            hands[seat] = remaining.splice(0, 7);
+        }
+        return { hands, boneyard: remaining };
+    }
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         const shuffled = [...deck];
@@ -38,19 +46,21 @@ export function dealHands(deck: ICard[], maxVenda: number = 4): { hands: ICard[]
                 [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
             }
         }
-        const result = rawDeal(shuffled);
-        const hasTooManyDoubles = result.hands.some((h) => countDoubles(h) > maxVenda);
+        const result = rawDealToSeats(shuffled);
+        const hasTooManyDoubles = activeSeats.some(
+            (seat) => countDoubles(result.hands[seat]) > maxVenda
+        );
         if (!hasTooManyDoubles) return result;
     }
 
-    return rawDeal(deck);
+    return rawDealToSeats(deck);
 }
 
-export function findStarter(hands: ICard[][]): number {
-    for (let p = 0; p < 4; p++) {
-        if (hands[p].some((c) => c.a === 0 && c.b === 0)) return p;
+export function findStarter(hands: ICard[][], activeSeats: number[] = [0, 1, 2, 3]): number {
+    for (const p of activeSeats) {
+        if (hands[p]?.some((c) => c.a === 0 && c.b === 0)) return p;
     }
-    return 0;
+    return activeSeats[0] ?? 0;
 }
 
 export function getEndpoints(board: ICard[]): { head: number; tail: number } | null {
@@ -155,15 +165,19 @@ export function validatePlay(
     return { valid: false, reason: "তাস বোর্ডের সাথে মিলছে না / Card doesn't match" };
 }
 
-/** Check if a player has any double tile */
 export function hasDouble(hand: ICard[]): boolean {
     return hand.some((c) => c.a === c.b);
 }
 
-export function isBlocked(hands: ICard[][], board: ICard[], boneyard: ICard[]): boolean {
+export function isBlocked(
+    hands: ICard[][],
+    board: ICard[],
+    boneyard: ICard[],
+    activeSeats: number[] = [0, 1, 2, 3]
+): boolean {
     if (boneyard.length > 0) return false;
-    for (let i = 0; i < 4; i++) {
-        if (getPlayableMoves(hands[i], board).length > 0) return false;
+    for (const seat of activeSeats) {
+        if (hands[seat] && getPlayableMoves(hands[seat], board).length > 0) return false;
     }
     return true;
 }
@@ -172,9 +186,20 @@ export function handPoints(hand: ICard[]): number {
     return hand.reduce((sum, c) => sum + c.a + c.b, 0);
 }
 
-export function getBlockedWinner(hands: ICard[][]): number {
-    const pts = hands.map(handPoints);
-    return pts.indexOf(Math.min(...pts));
+export function getBlockedWinner(
+    hands: ICard[][],
+    activeSeats: number[] = [0, 1, 2, 3]
+): number {
+    let minPts = Infinity;
+    let winner = activeSeats[0] ?? 0;
+    for (const seat of activeSeats) {
+        const pts = handPoints(hands[seat] || []);
+        if (pts < minPts) {
+            minPts = pts;
+            winner = seat;
+        }
+    }
+    return winner;
 }
 
 export function sanitizeForPlayer(room: IRoom, playerSeat: number) {
@@ -191,7 +216,23 @@ export function sanitizeForPlayer(room: IRoom, playerSeat: number) {
         passes: room.passes,
         round: room.round,
         lastWinner: room.lastWinner,
-        rules: room.rules,
+        rules: room.rules ? {
+            firstRoundStartWith00: room.rules.firstRoundStartWith00 ?? true,
+            blockerGetsZero: room.rules.blockerGetsZero ?? true,
+            winningPoints: room.rules.winningPoints ?? 100,
+            maximumVenda: room.rules.maximumVenda ?? 4,
+            maxPlayers: room.rules.maxPlayers ?? 4,
+            useLowestVendaForFewPlayers: room.rules.useLowestVendaForFewPlayers ?? true,
+            blockerRefill: room.rules.blockerRefill ?? true,
+        } : {
+            firstRoundStartWith00: true,
+            blockerGetsZero: true,
+            winningPoints: 100,
+            maximumVenda: 4,
+            maxPlayers: 4,
+            useLowestVendaForFewPlayers: true,
+            blockerRefill: true,
+        },
         creator: room.creator,
         players: room.players.map((p) => ({
             username: p.username,

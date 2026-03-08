@@ -28,7 +28,7 @@ app.prepare().then(() => {
     httpServer.listen(port, () => {
         console.log(`
 ╔══════════════════════════════════════════╗
-║   🎲 DOMINO ROYAL SERVER RUNNING        ║
+║   🎲 GAFLA SERVER RUNNING        ║
 ║   http://localhost:${port}                 ║
 ║   Socket.IO enabled                      ║
 ╚══════════════════════════════════════════╝

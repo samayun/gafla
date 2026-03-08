@@ -26,32 +26,61 @@ interface RoomInfo {
     status: string;
     round: number;
     playerCount: number;
+    maxPlayers: number;
     seats: RoomSeat[];
 }
 
 function MiniTable({ seats, compact }: { seats: RoomSeat[]; compact?: boolean }) {
+    const seatCount = seats.length;
     const cls = compact ? "mini-table compact" : "mini-table";
+
+    if (seatCount <= 2) {
+        return (
+            <div className={cls}>
+                <div className={`mt-seat ${seats[0]?.occupied ? "occupied" : "empty"}`}>
+                    <span>{seats[0]?.occupied ? seats[0].displayName : ""}</span>
+                </div>
+                <div className="mt-mid">
+                    <div className="mt-center" />
+                </div>
+                {seatCount === 2 && (
+                    <div className={`mt-seat ${seats[1]?.occupied ? "occupied" : "empty"}`}>
+                        <span>{seats[1]?.occupied ? seats[1].displayName : ""}</span>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     return (
         <div className={cls}>
-            {/* Top seat */}
             <div className={`mt-seat mt-top ${seats[2]?.occupied ? "occupied" : "empty"}`}>
                 <span>{seats[2]?.occupied ? seats[2].displayName : ""}</span>
             </div>
-            {/* Middle row: left - center - right */}
             <div className="mt-mid">
-                <div className={`mt-seat mt-left ${seats[3]?.occupied ? "occupied" : "empty"}`}>
-                    <span>{seats[3]?.occupied ? seats[3].displayName : ""}</span>
-                </div>
+                {seatCount >= 4 && (
+                    <div className={`mt-seat mt-left ${seats[3]?.occupied ? "occupied" : "empty"}`}>
+                        <span>{seats[3]?.occupied ? seats[3].displayName : ""}</span>
+                    </div>
+                )}
                 <div className="mt-center" />
                 <div className={`mt-seat mt-right ${seats[1]?.occupied ? "occupied" : "empty"}`}>
                     <span>{seats[1]?.occupied ? seats[1].displayName : ""}</span>
                 </div>
             </div>
-            {/* Bottom seat */}
             <div className={`mt-seat mt-bottom ${seats[0]?.occupied ? "occupied" : "empty"}`}>
                 <span>{seats[0]?.occupied ? seats[0].displayName : ""}</span>
             </div>
         </div>
+    );
+}
+
+function PlayerBadge({ name, connected }: { name: string; connected?: boolean }) {
+    return (
+        <span className="player-badge-inline">
+            <span className={`player-dot ${connected !== false ? "online" : "offline"}`} />
+            {name}
+        </span>
     );
 }
 
@@ -64,7 +93,9 @@ export default function LobbyPage() {
     const [showShare, setShowShare] = useState(false);
     const [copied, setCopied] = useState(false);
     const [rooms, setRooms] = useState<RoomInfo[]>([]);
+    const [createRoomPlayerCount, setCreateRoomPlayerCount] = useState(4);
     const [loadingRooms, setLoadingRooms] = useState(true);
+    const [selectedRoom, setSelectedRoom] = useState<RoomInfo | null>(null);
 
     useEffect(() => {
         if (!loading && !user) {
@@ -78,7 +109,6 @@ export default function LobbyPage() {
         if (r) setJoinCode(r);
     }, []);
 
-    // Fetch active rooms
     const fetchRooms = useCallback(async () => {
         if (!token) return;
         try {
@@ -108,13 +138,13 @@ export default function LobbyPage() {
             await fetch("/api/rooms/create", {
                 method: "POST",
                 headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ code }),
+                body: JSON.stringify({ code, maxPlayers: createRoomPlayerCount }),
             });
             fetchRooms();
         } catch {
             // room will be created when user joins via socket
         }
-    }, [token, fetchRooms]);
+    }, [token, fetchRooms, createRoomPlayerCount]);
 
     const handleGoToRoom = useCallback(
         (code: string) => {
@@ -156,13 +186,24 @@ export default function LobbyPage() {
         setTimeout(() => setCopied(false), 2000);
     }, [getInviteUrl]);
 
+    const handleRoomClick = useCallback((r: RoomInfo) => {
+        setSelectedRoom(r);
+    }, []);
+
     if (loading || !user) {
         return <div className="page-center"><div className="spinner" /></div>;
     }
 
     const hasFreeSeat = (r: RoomInfo) => r.seats.some((s) => !s.occupied);
     const isMyRoom = (r: RoomInfo) => r.seats.some((s) => s.username === user.username);
-    const canClickRoom = (r: RoomInfo) => hasFreeSeat(r) || isMyRoom(r);
+    const canJoinRoom = (r: RoomInfo) => hasFreeSeat(r) || isMyRoom(r);
+
+    const playerLabel = (count: number) => {
+        if (count === 1) return "একক / Solo";
+        if (count === 2) return "জুটি / Duo";
+        if (count === 3) return "তিনজন / Trio";
+        return "চারজন / Quad";
+    };
 
     return (
         <div className="lobby-page">
@@ -182,12 +223,27 @@ export default function LobbyPage() {
             </header>
 
             <div className="lobby-main">
-                {/* Top actions */}
                 <div className="lobby-grid">
                     <div className="lobby-card">
                         <h2>রুম তৈরি করুন</h2>
                         <p>নতুন রুম তৈরি করে বন্ধুদের আমন্ত্রণ জানান</p>
                         <p className="en-text">Create a new room and invite friends</p>
+                        <div className="create-room-player-count">
+                            <span className="create-room-label">খেলোয়াড় সংখ্যা / Player count</span>
+                            <div className="create-room-btns">
+                                {[1, 2, 3, 4].map((n) => (
+                                    <button
+                                        key={n}
+                                        type="button"
+                                        className={`create-room-pc-btn ${createRoomPlayerCount === n ? "active" : ""}`}
+                                        onClick={() => setCreateRoomPlayerCount(n)}
+                                        aria-pressed={createRoomPlayerCount === n}
+                                    >
+                                        {n === 1 ? "👤" : n === 2 ? "👥" : n === 3 ? "👥+" : "👥👥"} {n}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                         <button className="btn-prime" onClick={handleCreateRoom}>
                             রুম তৈরি / Create Room
                         </button>
@@ -233,8 +289,9 @@ export default function LobbyPage() {
                             {rooms.map((r) => (
                                 <div
                                     key={r.code}
-                                    className={`room-card ${!canClickRoom(r) ? "full" : ""} ${isMyRoom(r) ? "my-room" : ""}`}
-                                    onClick={() => canClickRoom(r) && handleGoToRoom(r.code)}
+                                    className={`room-card ${!canJoinRoom(r) ? "full" : ""} ${isMyRoom(r) ? "my-room" : ""}`}
+                                    onClick={() => handleRoomClick(r)}
+                                    onTouchEnd={(e) => { e.preventDefault(); handleRoomClick(r); }}
                                 >
                                     <div className="room-card-header">
                                         <span className="room-card-code">{r.code}</span>
@@ -247,7 +304,8 @@ export default function LobbyPage() {
 
                                     <div className="room-card-footer">
                                         <span className="player-count-badge">
-                                            {r.playerCount}/4 জন
+                                            {r.playerCount}/{r.maxPlayers} জন
+                                            <span className="player-type-label"> ({playerLabel(r.maxPlayers)})</span>
                                         </span>
                                         {isMyRoom(r) ? (
                                             <span className="join-hint rejoin">ফিরে যান / Rejoin</span>
@@ -263,6 +321,50 @@ export default function LobbyPage() {
                     )}
                 </div>
 
+                {/* Room Detail Modal */}
+                {selectedRoom && (
+                    <div className="share-overlay" onClick={() => setSelectedRoom(null)}>
+                        <div className="share-modal room-detail-modal" onClick={(e) => e.stopPropagation()}>
+                            <h2>রুম {selectedRoom.code}</h2>
+                            <span className={`room-status-pill ${selectedRoom.status}`} style={{ display: "inline-block", marginBottom: "12px" }}>
+                                {selectedRoom.status === "lobby" ? "অপেক্ষায় / Waiting" : `খেলা চলছে / Round ${selectedRoom.round}`}
+                            </span>
+
+                            <div className="room-detail-info">
+                                <p className="room-detail-label">খেলোয়াড় / Players ({selectedRoom.playerCount}/{selectedRoom.maxPlayers})</p>
+                                <div className="room-detail-players">
+                                    {selectedRoom.seats.map((s, i) => (
+                                        <div key={i} className={`room-detail-seat ${s.occupied ? "occupied" : "empty"}`}>
+                                            <span className="room-detail-seat-num">সিট {i + 1}</span>
+                                            {s.occupied ? (
+                                                <PlayerBadge name={s.displayName!} />
+                                            ) : (
+                                                <span className="room-detail-empty">খালি / Empty</span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="room-detail-type">{playerLabel(selectedRoom.maxPlayers)}</p>
+                            </div>
+
+                            <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
+                                {canJoinRoom(selectedRoom) && (
+                                    <button className="btn-prime" style={{ flex: 1 }} onClick={() => handleGoToRoom(selectedRoom.code)}>
+                                        {isMyRoom(selectedRoom) ? "ফিরে যান / Rejoin" : "যোগ দিন / Join"}
+                                    </button>
+                                )}
+                                <button
+                                    className="btn-outline"
+                                    style={{ flex: canJoinRoom(selectedRoom) ? undefined : 1 }}
+                                    onClick={() => setSelectedRoom(null)}
+                                >
+                                    বন্ধ / Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Share Modal */}
                 {showShare && (
                     <div className="share-overlay" onClick={() => setShowShare(false)}>
@@ -276,15 +378,15 @@ export default function LobbyPage() {
 
                             <div className="share-buttons">
                                 <button className="share-btn whatsapp" onClick={shareWhatsApp}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" /></svg>
                                     WhatsApp
                                 </button>
                                 <button className="share-btn facebook" onClick={shareFacebook}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" /></svg>
                                     Facebook
                                 </button>
                                 <button className="share-btn messenger" onClick={shareMessenger}>
-                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.373 0 0 4.974 0 11.111c0 3.498 1.744 6.614 4.469 8.654V24l4.088-2.242c1.092.301 2.246.464 3.443.464 6.627 0 12-4.975 12-11.111S18.627 0 12 0zm1.191 14.963l-3.055-3.26-5.963 3.26L10.732 8.2l3.131 3.259L19.752 8.2l-6.561 6.763z"/></svg>
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 0C5.373 0 0 4.974 0 11.111c0 3.498 1.744 6.614 4.469 8.654V24l4.088-2.242c1.092.301 2.246.464 3.443.464 6.627 0 12-4.975 12-11.111S18.627 0 12 0zm1.191 14.963l-3.055-3.26-5.963 3.26L10.732 8.2l3.131 3.259L19.752 8.2l-6.561 6.763z" /></svg>
                                     Messenger
                                 </button>
                                 <button className="share-btn copy" onClick={copyLink}>

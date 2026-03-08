@@ -14,19 +14,23 @@ export async function GET() {
             .limit(30)
             .lean();
 
-        const list = rooms.map((r: any) => ({
-            code: r.code,
-            creator: r.creator,
-            status: r.status,
-            round: r.round || 0,
-            playerCount: r.players?.length || 0,
-            seats: [0, 1, 2, 3].map((i) => {
-                const p = r.players?.find((pl: any) => pl.seatIndex === i);
-                return p
-                    ? { occupied: true, displayName: p.displayName, username: p.username }
-                    : { occupied: false };
-            }),
-        }));
+        const list = rooms.map((r: any) => {
+            const maxPlayers = r.rules?.maxPlayers ?? 4;
+            return {
+                code: r.code,
+                creator: r.creator,
+                status: r.status,
+                round: r.round || 0,
+                playerCount: r.players?.length || 0,
+                maxPlayers,
+                seats: Array.from({ length: maxPlayers }, (_, i) => {
+                    const p = r.players?.find((pl: any) => pl.seatIndex === i);
+                    return p
+                        ? { occupied: true, displayName: p.displayName, username: p.username }
+                        : { occupied: false };
+                }),
+            };
+        });
 
         return NextResponse.json({ rooms: list });
     } catch (err) {

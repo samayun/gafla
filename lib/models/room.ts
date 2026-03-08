@@ -18,12 +18,17 @@ export interface IRoomRules {
     blockerGetsZero: boolean;
     winningPoints: number;
     maximumVenda: number;
+    maxPlayers: number;
+    useLowestVendaForFewPlayers?: boolean;
+    blockerRefill?: boolean;
 }
 
+/** Seat indices that are bot-controlled (e.g. [1,2,3] for single-player). */
 export interface IRoom extends Document {
     code: string;
     creator: string;
     players: IPlayer[];
+    botSeats?: number[];
     board: ICard[];
     hands: ICard[][];
     boneyard: ICard[];
@@ -60,6 +65,9 @@ const RulesSchema = new Schema<IRoomRules>(
         blockerGetsZero: { type: Boolean, default: true },
         winningPoints: { type: Number, default: 100 },
         maximumVenda: { type: Number, default: 4 },
+        maxPlayers: { type: Number, default: 4, min: 1, max: 4 },
+        useLowestVendaForFewPlayers: { type: Boolean, default: true },
+        blockerRefill: { type: Boolean, default: true },
     },
     { _id: false }
 );
@@ -69,6 +77,7 @@ const RoomSchema = new Schema<IRoom>(
         code: { type: String, required: true, unique: true, uppercase: true },
         creator: { type: String, default: "" },
         players: { type: [PlayerSchema], default: [] },
+        botSeats: { type: [Number], default: undefined },
         board: { type: [CardSchema], default: [] },
         hands: { type: [[CardSchema]], default: [[], [], [], []] },
         boneyard: { type: [CardSchema], default: [] },

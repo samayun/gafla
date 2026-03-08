@@ -48,10 +48,13 @@ export async function PATCH(
         if (typeof body.maximumVenda === "number") {
             room.rules.maximumVenda = Math.max(1, Math.min(7, body.maximumVenda));
         }
+        if (typeof body.maxPlayers === "number") {
+            room.rules.maxPlayers = Math.max(1, Math.min(4, body.maxPlayers));
+        }
 
         await room.save();
 
-        return NextResponse.json({ ok: true, rules: room.rules });
+        return NextResponse.json({ ok: true, rules: room.toObject().rules });
     } catch (err) {
         console.error("Room config update error:", err);
         return NextResponse.json({ error: "Failed to update config" }, { status: 500 });

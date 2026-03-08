@@ -58,16 +58,32 @@ function DominoTile({
         </div>
     );
 
-    const handleInteraction = (e: React.MouseEvent | React.TouchEvent) => {
-        if (e.type === "touchend") e.preventDefault();
-        if ((playable || inHand) && onClick) onClick();
+    const tapped = useRef(false);
+
+    const handleTouchEnd = (e: React.TouchEvent) => {
+        if ((playable || inHand) && onClick) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!tapped.current) {
+                tapped.current = true;
+                onClick();
+                setTimeout(() => { tapped.current = false; }, 300);
+            }
+        }
+    };
+
+    const handleClick = (e: React.MouseEvent) => {
+        if ((playable || inHand) && onClick) {
+            e.preventDefault();
+            onClick();
+        }
     };
 
     return (
         <div
             className={`domino ${horizontal ? "horizontal" : ""} ${playable ? "playable" : ""} ${inHand ? "in-hand" : ""} ${small ? "small" : ""}`}
-            onClick={handleInteraction}
-            onTouchEnd={handleInteraction}
+            onClick={handleClick}
+            onTouchEnd={handleTouchEnd}
         >
             {half(a)}
             <div className="divider" />
@@ -75,6 +91,13 @@ function DominoTile({
         </div>
     );
 }
+
+const PLAYER_COUNT_OPTIONS = [
+    { value: 1, label: "একক / Solo", emoji: "👤" },
+    { value: 2, label: "জুটি / Duo", emoji: "👥" },
+    { value: 3, label: "তিনজন / Trio", emoji: "👥+" },
+    { value: 4, label: "চারজন / Quad", emoji: "👥👥" },
+];
 
 export default function GamePageWrapper() {
     return (
@@ -100,9 +123,11 @@ function GamePage() {
         players: { username: string; displayName: string; seatIndex: number; connected: boolean }[];
         status: string;
         creator: string;
-        rules: { firstRoundStartWith00?: boolean; blockerGetsZero?: boolean; winningPoints?: number; maximumVenda?: number };
+        rules: { firstRoundStartWith00?: boolean; blockerGetsZero?: boolean; winningPoints?: number; maximumVenda?: number; maxPlayers?: number };
     } | null>(null);
     const [copied, setCopied] = useState(false);
+    const [botTurnOverlay, setBotTurnOverlay] = useState<{ playerName: string; action: "play" | "draw" | "pass" } | null>(null);
+    const [showBoneyardPicker, setShowBoneyardPicker] = useState(false);
 
     const toastId = useRef(0);
     const socketRef = useRef<Socket | null>(null);
@@ -119,7 +144,6 @@ function GamePage() {
         }
     }, [user, loading, router, roomCode]);
 
-    // Socket setup
     useEffect(() => {
         if (!token || !roomCode) return;
 
@@ -138,6 +162,15 @@ function GamePage() {
 
         socket.on("game-state", (state: SanitizedState) => {
             setGameState(state);
+            setBotTurnOverlay(null);
+        });
+
+        socket.on("bot-turn", (data: { playerName: string; action: "play" | "draw" | "pass" }) => {
+            setBotTurnOverlay({ playerName: data.playerName, action: data.action });
+        });
+
+        socket.on("rules-updated", (data: { rules: SanitizedState["rules"] }) => {
+            setGameState((prev) => (prev ? { ...prev, rules: data.rules } : null));
         });
 
         socket.on("round-end", (result: RoundResult) => {
@@ -158,6 +191,7 @@ function GamePage() {
 
         socket.on("auto-pass", (data: { playerName: string; message: string }) => {
             showToast(data.message, false);
+            setBotTurnOverlay(null);
         });
 
         socket.on("left-room", () => {
@@ -170,10 +204,20 @@ function GamePage() {
             showToast(data.message, false);
         });
 
+        socket.on("deck-shuffled", (data: { message: string }) => {
+            showToast(data.message, false);
+        });
+
+        socket.on("blocker-refill", (data: { message: string }) => {
+            showToast(data.message, false);
+        });
+
         return () => {
             socket.off("joined");
             socket.off("rejoined");
             socket.off("game-state");
+            socket.off("bot-turn");
+            socket.off("rules-updated");
             socket.off("round-end");
             socket.off("error");
             socket.off("room-info");
@@ -181,10 +225,11 @@ function GamePage() {
             socket.off("auto-pass");
             socket.off("left-room");
             socket.off("player-left");
+            socket.off("deck-shuffled");
+            socket.off("blocker-refill");
         };
     }, [token, roomCode, showToast, router]);
 
-    // Poll room info for seat selection
     useEffect(() => {
         if (view !== "seat-select" || !roomCode || !socketRef.current) return;
 
@@ -202,6 +247,7 @@ function GamePage() {
     }, [roomCode, seat]);
 
     const startGame = () => socketRef.current?.emit("start-game");
+    const shuffleDeck = () => socketRef.current?.emit("shuffle-deck");
 
     const handlePlayCard = (cardIdx: number) => {
         if (!gameState || gameState.turn !== gameState.mySeat) return;
@@ -232,7 +278,10 @@ function GamePage() {
         setSideChoice(null);
     };
 
-    const handleDraw = () => socketRef.current?.emit("draw-card");
+    const handleDraw = (boneyardIndex?: number) => {
+        socketRef.current?.emit("draw-card", boneyardIndex != null ? { boneyardIndex } : undefined);
+        setShowBoneyardPicker(false);
+    };
     const handlePass = () => socketRef.current?.emit("pass-turn");
 
     const handleNextRound = () => {
@@ -265,7 +314,6 @@ function GamePage() {
                 return gameState.myHand.map((_, i) => ({ idx: i, side: "tail" as const }));
             }
 
-            // Round 2+: winner must play any venda (0:0 not mandatory). No venda = pass.
             const hasDouble = gameState.myHand.some((c) => c.a === c.b);
             if (hasDouble) {
                 return gameState.myHand
@@ -288,6 +336,15 @@ function GamePage() {
 
         return moves;
     }, [gameState]);
+
+    const isMyTurn = gameState?.turn === gameState?.mySeat && gameState?.status === "playing";
+    const hasPossible = playableMoves.length > 0;
+    const canDraw = isMyTurn && !hasPossible && (gameState?.boneyard || 0) > 0;
+    const canPass = isMyTurn && !hasPossible && (gameState?.boneyard || 0) === 0;
+
+    useEffect(() => {
+        if (!canDraw) setShowBoneyardPicker(false);
+    }, [canDraw]);
 
     const copyInvite = async () => {
         const url = `${window.location.origin}/game?room=${roomCode}`;
@@ -320,6 +377,10 @@ function GamePage() {
         );
     }
 
+    const maxPlayersRaw = roomInfo?.rules?.maxPlayers ?? gameState?.rules?.maxPlayers ?? null;
+    const maxPlayers = Number(maxPlayersRaw) || 4;
+    const roomInfoLoaded = maxPlayersRaw !== null;
+
     // --- SEAT SELECTION ---
     if (view === "seat-select") {
         return (
@@ -331,49 +392,86 @@ function GamePage() {
                     <p className="lobby-subtitle">রুম: {roomCode}</p>
 
                     <div className="invite-bar">
-                        <button className="share-btn-sm whatsapp" onClick={shareWhatsApp}>WhatsApp</button>
-                        <button className="share-btn-sm copy" onClick={copyInvite}>
+                        <button className="share-btn-sm whatsapp" onClick={shareWhatsApp} onTouchEnd={(e) => { e.preventDefault(); shareWhatsApp(); }}>WhatsApp</button>
+                        <button className="share-btn-sm copy" onClick={copyInvite} onTouchEnd={(e) => { e.preventDefault(); copyInvite(); }}>
                             {copied ? "কপি হয়েছে ✓" : "লিংক কপি"}
                         </button>
                     </div>
 
-                    <div className="input-group">
-                        <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginTop: "10px" }}>
-                            সিট বাছাই করুন / Select Your Seat:
-                        </p>
-                        <div className="player-selector">
-                            {[0, 1, 2, 3].map((i) => {
-                                const existing = roomInfo?.players.find((p) => p.seatIndex === i);
-                                const taken = existing && existing.username !== user.username;
-
-                                return (
-                                    <button
-                                        key={i}
-                                        className={`seat-btn ${seat === i ? "selected" : ""} ${taken ? "taken" : ""}`}
-                                        onClick={() => !taken && setSeat(i)}
-                                    >
-                                        সিট {i + 1}
-                                        <span className="seat-status">
-                                            {existing
-                                                ? existing.connected
-                                                    ? existing.displayName
-                                                    : `${existing.displayName} (দূরে)`
-                                                : "খালি / Empty"}
-                                        </span>
-                                    </button>
-                                );
-                            })}
+                    {/* Player list: who's already here */}
+                    {roomInfo && roomInfo.players.length > 0 && (
+                        <div className="joined-players-section">
+                            <p className="joined-label">রুমে আছেন / Already joined:</p>
+                            <div className="joined-players-list">
+                                {roomInfo.players.map((p) => (
+                                    <span key={p.username} className={`joined-player-chip ${p.connected ? "online" : "offline"}`}>
+                                        <span className={`player-dot ${p.connected ? "online" : "offline"}`} />
+                                        {p.displayName} (সিট {p.seatIndex + 1})
+                                    </span>
+                                ))}
+                            </div>
                         </div>
-                    </div>
+                    )}
 
-                    <button className="btn-prime" onClick={joinRoom}>
-                        টেবিলে বসুন / JOIN TABLE
-                    </button>
+                    {!roomInfoLoaded ? (
+                        <div style={{ textAlign: "center", padding: "30px 0" }}>
+                            <div className="spinner" />
+                            <p style={{ marginTop: "10px", fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                                রুমের তথ্য লোড হচ্ছে... / Loading room data...
+                            </p>
+                        </div>
+                    ) : (
+                        <>
+                            <div className="input-group">
+                                <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginTop: "10px" }}>
+                                    {maxPlayers === 1
+                                        ? "একক খেলা: কম্পিউটারের বিরুদ্ধে খেলুন / Solo: Play vs Computer"
+                                        : "সিট বাছাই করুন / Select Your Seat:"}
+                                </p>
+                                <div className={`player-selector ${maxPlayers <= 2 ? "cols-2" : ""}`}>
+                                    {Array.from({ length: maxPlayers }, (_, i) => {
+                                        const existing = roomInfo?.players.find((p) => p.seatIndex === i);
+                                        const taken = existing && existing.username !== user.username;
+
+                                        return (
+                                            <button
+                                                key={i}
+                                                className={`seat-btn ${seat === i ? "selected" : ""} ${taken ? "taken" : ""}`}
+                                                onClick={() => !taken && setSeat(i)}
+                                                onTouchEnd={(e) => {
+                                                    e.preventDefault();
+                                                    if (!taken) setSeat(i);
+                                                }}
+                                            >
+                                                {maxPlayers === 1 ? "আমার সিট" : `সিট ${i + 1}`}
+                                                <span className="seat-status">
+                                                    {existing
+                                                        ? existing.connected
+                                                            ? existing.displayName
+                                                            : `${existing.displayName} (দূরে)`
+                                                        : "খালি / Empty"}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <button
+                                className="btn-prime"
+                                onClick={joinRoom}
+                                onTouchEnd={(e) => { e.preventDefault(); joinRoom(); }}
+                            >
+                                {maxPlayers === 1 ? "খেলা শুরু / START SOLO" : "টেবিলে বসুন / JOIN TABLE"}
+                            </button>
+                        </>
+                    )}
 
                     <button
                         className="btn-outline"
                         style={{ marginTop: "10px" }}
                         onClick={() => router.push("/lobby")}
+                        onTouchEnd={(e) => { e.preventDefault(); router.push("/lobby"); }}
                     >
                         লবিতে ফিরুন / Back to Lobby
                     </button>
@@ -386,21 +484,45 @@ function GamePage() {
         );
     }
 
-    // --- GAME VIEW ---
-    const isMyTurn = gameState?.turn === gameState?.mySeat && gameState?.status === "playing";
-    const hasPossible = playableMoves.length > 0;
-    const canDraw = isMyTurn && !hasPossible && (gameState?.boneyard || 0) > 0;
-    const canPass = isMyTurn && !hasPossible && (gameState?.boneyard || 0) === 0;
+    // --- GAME VIEW --- (isMyTurn, hasPossible, canDraw, canPass computed above before any return)
+    const activePlayers = gameState?.players || [];
+    const activePlayerCount = activePlayers.length;
 
-    const positionOrder = gameState
-        ? [
-            (gameState.mySeat + 2) % 4,
-            (gameState.mySeat + 1) % 4,
-            (gameState.mySeat + 3) % 4,
-            gameState.mySeat,
-        ]
-        : [2, 1, 3, 0];
-    const positionClasses = ["tag-top", "tag-right", "tag-left", "tag-bottom"];
+    // Dynamic position layout based on player count
+    const getPositionLayout = () => {
+        if (!gameState) return { order: [2, 1, 3, 0], classes: ["tag-top", "tag-right", "tag-left", "tag-bottom"] };
+
+        const mySeat = gameState.mySeat;
+        const otherPlayers = activePlayers.filter((p) => p.seatIndex !== mySeat);
+
+        if (activePlayerCount === 1) {
+            return { order: [mySeat], classes: ["tag-bottom"] };
+        }
+        if (activePlayerCount === 2) {
+            const other = otherPlayers[0]?.seatIndex ?? 0;
+            return { order: [other, mySeat], classes: ["tag-top", "tag-bottom"] };
+        }
+        if (activePlayerCount === 3) {
+            const sorted = otherPlayers.map(p => p.seatIndex).sort((a, b) => a - b);
+            return {
+                order: [sorted[0], sorted[1], mySeat],
+                classes: ["tag-top", "tag-right", "tag-bottom"],
+            };
+        }
+
+        return {
+            order: [
+                (mySeat + 2) % 4,
+                (mySeat + 1) % 4,
+                (mySeat + 3) % 4,
+                mySeat,
+            ],
+            classes: ["tag-top", "tag-right", "tag-left", "tag-bottom"],
+        };
+    };
+
+    const { order: positionOrder, classes: positionClasses } = getPositionLayout();
+    const isCreator = gameState?.creator === user.username;
 
     return (
         <div className="game-view">
@@ -416,11 +538,32 @@ function GamePage() {
                     <div className="stat-badge hide-mobile">
                         আমি: <span style={{ color: "var(--accent-secondary)" }}>{user.displayName}</span>
                     </div>
-                    <button className="stat-badge exit-btn" onClick={leaveRoom}>
+                    <button
+                        className="stat-badge exit-btn"
+                        onClick={leaveRoom}
+                        onTouchEnd={(e) => { e.preventDefault(); leaveRoom(); }}
+                    >
                         বের হন
                     </button>
                 </div>
             </header>
+
+            {/* Robot turn overlay — animated "Robot X is playing / passing / drawing" */}
+            {botTurnOverlay && (
+                <div className="bot-turn-overlay" role="status" aria-live="polite">
+                    <div className="bot-turn-pulse" />
+                    <span className="bot-turn-text">
+                        {botTurnOverlay.action === "play" && `${botTurnOverlay.playerName} খেলছে...`}
+                        {botTurnOverlay.action === "draw" && `${botTurnOverlay.playerName} তাস তুলছে...`}
+                        {botTurnOverlay.action === "pass" && `${botTurnOverlay.playerName} পাস করছে...`}
+                    </span>
+                    <span className="bot-turn-en">
+                        {botTurnOverlay.action === "play" && `${botTurnOverlay.playerName} is playing...`}
+                        {botTurnOverlay.action === "draw" && `${botTurnOverlay.playerName} is drawing...`}
+                        {botTurnOverlay.action === "pass" && `${botTurnOverlay.playerName} passes...`}
+                    </span>
+                </div>
+            )}
 
             {/* Main Board */}
             <div className="main-board">
@@ -444,16 +587,67 @@ function GamePage() {
                                 <span className="pulse-dot">...</span>
                             </h2>
                             <p>
-                                {gameState?.players.length || 0}/4 জন রুমে আছে •{" "}
-                                {(gameState?.players.length || 0) >= 2
+                                {activePlayerCount}/{maxPlayers} জন রুমে আছে •{" "}
+                                {(maxPlayers === 1 ? activePlayerCount >= 1 : activePlayerCount >= 2)
                                     ? "শুরু করার জন্য প্রস্তুত!"
-                                    : "কমপক্ষে ২ জন দরকার"}
+                                    : `কমপক্ষে ${maxPlayers === 1 ? "১" : "২"} জন দরকার`}
                             </p>
+                            {maxPlayers === 1 && (
+                                <p className="solo-hint" style={{ marginTop: "8px", fontSize: "0.9rem", opacity: 0.95 }}>
+                                    একক খেলা: কম্পিউটারের বিরুদ্ধে • Solo: Play vs Computer
+                                </p>
+                            )}
 
-                            {/* Room Rules Config - only shown to creator */}
-                            {gameState?.creator === user.username && (
-                                <div className="room-rules-config">
-                                    <h4>রুমের নিয়ম / Room Rules</h4>
+                            {/* Room Rules Config - any player in lobby can update (player count; creator-only optional below) */}
+                            <div className="room-rules-config">
+                                <h4>রুমের নিয়ম / Room Rules</h4>
+
+                                {/* Player count: anyone in room can set (1–4). Update anytime before start. */}
+                                <div className="player-count-selector">
+                                    <p className="toggle-label" style={{ marginBottom: "4px" }}>
+                                        খেলোয়াড় সংখ্যা / Player Count
+                                    </p>
+                                    <p className="player-count-current" aria-live="polite">
+                                        বর্তমান: {maxPlayers} জন / Current: {maxPlayers} players
+                                    </p>
+                                    <p className="player-count-hint" style={{ fontSize: "0.85rem", opacity: 0.9, marginTop: "2px" }}>
+                                        যেকোনো সময় পরিবর্তন করা যাবে (শুরু করার আগে)
+                                    </p>
+                                    <div className="player-count-btns">
+                                        {PLAYER_COUNT_OPTIONS.map((opt) => (
+                                            <button
+                                                key={opt.value}
+                                                type="button"
+                                                aria-pressed={maxPlayers === opt.value}
+                                                aria-label={`${opt.value} players`}
+                                                className={`player-count-btn ${maxPlayers === opt.value ? "active" : ""}`}
+                                                onClick={() => {
+                                                    setGameState((prev) =>
+                                                        prev
+                                                            ? { ...prev, rules: { ...(prev.rules || {}), maxPlayers: opt.value } }
+                                                            : null
+                                                    );
+                                                    socketRef.current?.emit("update-rules", { maxPlayers: opt.value });
+                                                }}
+                                                onTouchEnd={(e) => {
+                                                    e.preventDefault();
+                                                    setGameState((prev) =>
+                                                        prev
+                                                            ? { ...prev, rules: { ...(prev.rules || {}), maxPlayers: opt.value } }
+                                                            : null
+                                                    );
+                                                    socketRef.current?.emit("update-rules", { maxPlayers: opt.value });
+                                                }}
+                                            >
+                                                <span className="pc-emoji">{opt.emoji}</span>
+                                                <span className="pc-label">{opt.value}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {isCreator && (
+                                    <>
                                     <label className="rule-toggle">
                                         <input
                                             type="checkbox"
@@ -467,7 +661,7 @@ function GamePage() {
                                         <span className="toggle-slider" />
                                         <span className="toggle-label">
                                             শুধু গেমের প্রথম রাউন্ডে 0:0। পরের রাউন্ড = জয়ী ভেন্ডা দিয়ে শুরু
-                                            <small>0:0 only in game's first round. Later rounds = winner starts with venda</small>
+                                            <small>0:0 only in game&apos;s first round. Later rounds = winner starts with venda</small>
                                         </span>
                                     </label>
                                     <label className="rule-toggle">
@@ -520,26 +714,44 @@ function GamePage() {
                                             className="winning-points-input"
                                         />
                                     </div>
-                                </div>
-                            )}
+                                </>
+                                )}
+                            </div>
 
                             {/* Show current rules for non-creators */}
-                            {gameState?.creator !== user.username && gameState?.rules && (
+                            {!isCreator && gameState?.rules && (
                                 <div className="room-rules-display">
                                     <p>
                                         {(gameState.rules?.firstRoundStartWith00 ?? true) ? "✓" : "✗"} গেম ১ম রাউন্ড: 0:0। পরের রাউন্ড: জয়ী ভেন্ডা &nbsp;|&nbsp;
                                         {gameState.rules.blockerGetsZero ? "✓" : "✗"} ব্লকারের শূন্য &nbsp;|&nbsp;
                                         জয়: {gameState.rules.winningPoints ?? 100} পয়েন্ট &nbsp;|&nbsp;
-                                        ম্যাক্স ভেন্ডা: {gameState.rules.maximumVenda ?? 4}
+                                        ম্যাক্স ভেন্ডা: {gameState.rules.maximumVenda ?? 4} &nbsp;|&nbsp;
+                                        {PLAYER_COUNT_OPTIONS.find(o => o.value === maxPlayers)?.label || `${maxPlayers} জন`}
                                     </p>
                                 </div>
                             )}
 
-                            {(gameState?.players.length || 0) >= 2 && (
-                                <button className="action-btn start-game" style={{ marginTop: "20px" }} onClick={startGame}>
-                                    খেলা শুরু / START GAME
+                            <div className="lobby-action-btns">
+                                {/* Shuffle Deck Button */}
+                                <button
+                                    className="action-btn shuffle-btn"
+                                    onClick={shuffleDeck}
+                                    onTouchEnd={(e) => { e.preventDefault(); shuffleDeck(); }}
+                                >
+                                    🔀 শাফেল / Shuffle Deck
                                 </button>
-                            )}
+
+                                {/* Start Game Button */}
+                                {(maxPlayers === 1 ? activePlayerCount >= 1 : activePlayerCount >= 2) && (
+                                    <button
+                                        className="action-btn start-game"
+                                        onClick={startGame}
+                                        onTouchEnd={(e) => { e.preventDefault(); startGame(); }}
+                                    >
+                                        খেলা শুরু / START GAME
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -569,15 +781,22 @@ function GamePage() {
                     );
                 })}
 
-                {/* Boneyard */}
+                {/* Boneyard — responsive: show count; when canDraw, CTA opens modal to pick a tile */}
                 <div className="boneyard">
-                    <div className="bone-stack">
-                        {Array.from({ length: Math.min(gameState?.boneyard || 0, 5) }).map((_, i) => (
-                            <div key={i} className="card-back" />
-                        ))}
-                    </div>
-                    <div className="bone-label">
-                        বোনইয়ার্ড: <span className="accent">{gameState?.boneyard || 0}</span>
+                    <div className="bone-info">
+                        <span className="bone-label">
+                            বোনইয়ার্ড: <span className="accent">{gameState?.boneyard || 0}</span>
+                        </span>
+                        {canDraw && gameState?.boneyard ? (
+                            <button
+                                type="button"
+                                className="bone-pick-cta"
+                                onClick={() => setShowBoneyardPicker(true)}
+                                onTouchEnd={(e) => { e.preventDefault(); setShowBoneyardPicker(true); }}
+                            >
+                                একটি গোপন তাস বেছে নিন
+                            </button>
+                        ) : null}
                     </div>
                 </div>
             </div>
@@ -592,10 +811,22 @@ function GamePage() {
                     </div>
                 )}
                 {canDraw && (
-                    <button className="action-btn" onClick={handleDraw}>তাস তুলুন / DRAW</button>
+                    <button
+                        className="action-btn action-btn-secondary"
+                        onClick={() => handleDraw()}
+                        onTouchEnd={(e) => { e.preventDefault(); handleDraw(); }}
+                    >
+                        বা র‍্যান্ডম / Or random
+                    </button>
                 )}
                 {canPass && (
-                    <button className="action-btn pass" onClick={handlePass}>পাস / PASS</button>
+                    <button
+                        className="action-btn pass"
+                        onClick={handlePass}
+                        onTouchEnd={(e) => { e.preventDefault(); handlePass(); }}
+                    >
+                        পাস / PASS
+                    </button>
                 )}
             </div>
 
@@ -620,10 +851,59 @@ function GamePage() {
                 </div>
             </div>
 
+            {/* Boneyard Picker Modal — select one hidden tile from a responsive grid */}
+            {showBoneyardPicker && canDraw && (gameState?.boneyard ?? 0) > 0 && (
+                <div
+                    className="boneyard-picker-overlay"
+                    onClick={() => setShowBoneyardPicker(false)}
+                    onTouchEnd={(e) => { e.preventDefault(); setShowBoneyardPicker(false); }}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="boneyard-picker-title"
+                >
+                    <div className="boneyard-picker-modal" onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
+                        <h2 id="boneyard-picker-title" className="boneyard-picker-title">
+                            বোনইয়ার্ড থেকে একটি তাস বেছে নিন
+                        </h2>
+                        <p className="boneyard-picker-subtitle">ট্যাপ করে একটি গোপন তাস নির্বাচন করুন / Tap a tile to pick</p>
+                        <div className="boneyard-picker-grid">
+                            {Array.from({ length: gameState?.boneyard ?? 0 }).map((_, i) => (
+                                <button
+                                    key={i}
+                                    type="button"
+                                    className="boneyard-picker-tile"
+                                    aria-label={`Pick tile ${i + 1}`}
+                                    onClick={() => handleDraw(i)}
+                                    onTouchEnd={(e) => { e.preventDefault(); handleDraw(i); }}
+                                />
+                            ))}
+                        </div>
+                        <div className="boneyard-picker-actions">
+                            <button
+                                type="button"
+                                className="action-btn action-btn-secondary"
+                                onClick={() => handleDraw()}
+                                onTouchEnd={(e) => { e.preventDefault(); handleDraw(); }}
+                            >
+                                র‍্যান্ডম / Random
+                            </button>
+                            <button
+                                type="button"
+                                className="action-btn pass"
+                                onClick={() => setShowBoneyardPicker(false)}
+                                onTouchEnd={(e) => { e.preventDefault(); setShowBoneyardPicker(false); }}
+                            >
+                                বাতিল / Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Side Chooser */}
             {sideChoice && (
-                <div className="side-chooser-overlay" onClick={() => setSideChoice(null)}>
-                    <div className="side-chooser" onClick={(e) => e.stopPropagation()}>
+                <div className="side-chooser-overlay" onClick={() => setSideChoice(null)} onTouchEnd={(e) => { e.preventDefault(); setSideChoice(null); }}>
+                    <div className="side-chooser" onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
                         <h3>কোন দিকে খেলবেন?</h3>
                         <p className="en-text">Play on which side?</p>
                         <div style={{ margin: "8px 0", display: "flex", justifyContent: "center" }}>
@@ -686,11 +966,20 @@ function GamePage() {
                             })}
                         </div>
                         {roundResult.gameOver ? (
-                            <button className="btn-prime" onClick={leaveRoom} style={{ marginTop: "16px" }}>
+                            <button
+                                className="btn-prime"
+                                onClick={leaveRoom}
+                                onTouchEnd={(e) => { e.preventDefault(); leaveRoom(); }}
+                                style={{ marginTop: "16px" }}
+                            >
                                 লবিতে ফিরুন / Back to Lobby
                             </button>
                         ) : (
-                            <button className="btn-prime" onClick={handleNextRound}>
+                            <button
+                                className="btn-prime"
+                                onClick={handleNextRound}
+                                onTouchEnd={(e) => { e.preventDefault(); handleNextRound(); }}
+                            >
                                 পরের রাউন্ড / NEXT ROUND
                             </button>
                         )}

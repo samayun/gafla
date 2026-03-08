@@ -17,7 +17,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const { code } = await req.json();
+        const body = await req.json();
+        const code = body?.code;
+        const maxPlayers = typeof body?.maxPlayers === "number"
+            ? Math.max(1, Math.min(4, body.maxPlayers))
+            : 4;
         if (!code) {
             return NextResponse.json({ error: "Room code required" }, { status: 400 });
         }
@@ -27,6 +31,15 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: true, code: existing.code });
         }
 
+        const defaultRules = {
+            firstRoundStartWith00: true,
+            blockerGetsZero: true,
+            winningPoints: 100,
+            maximumVenda: 4,
+            maxPlayers,
+            useLowestVendaForFewPlayers: true,
+            blockerRefill: true,
+        };
         const room = await Room.create({
             code: code.toUpperCase(),
             creator: user.username,
@@ -34,6 +47,7 @@ export async function POST(req: NextRequest) {
             hands: [[], [], [], []],
             scores: [0, 0, 0, 0],
             passes: [0, 0, 0, 0],
+            rules: defaultRules,
         });
 
         return NextResponse.json({ ok: true, code: room.code });
